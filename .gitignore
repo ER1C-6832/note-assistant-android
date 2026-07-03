@@ -1,0 +1,28 @@
+# Local IDE state
+.idea/
+*.iml
+
+# Android / Gradle outputs, for future implementation
+.gradle/
+build/
+captures/
+.cxx/
+local.properties
+
+# Kotlin / Java outputs, for future implementation
+out/
+*.class
+
+# Keystores and signing files
+*.jks
+*.keystore
+
+# Logs and temporary files
+*.log
+*.tmp
+*.temp
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
