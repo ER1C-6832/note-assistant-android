@@ -3,6 +3,7 @@ package com.er1cmo.noteassistant.notes.ui.detail
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.er1cmo.noteassistant.notes.domain.model.NoteType
 import com.er1cmo.noteassistant.notes.domain.usecase.NoteUseCases
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -22,9 +23,54 @@ class NoteDetailViewModel @Inject constructor(
     val state: StateFlow<NoteDetailState> = _state
 
     init {
+        refresh()
+    }
+
+    fun toggleDone(done: Boolean) {
+        val id = noteId ?: return
+        viewModelScope.launch {
+            _state.update { it.copy(isActing = true) }
+            noteUseCases.toggleTodoDone(id = id, done = done)
+            refresh(isActing = false)
+        }
+    }
+
+    fun togglePinned() {
+        val note = _state.value.note ?: return
+        viewModelScope.launch {
+            _state.update { it.copy(isActing = true) }
+            noteUseCases.setNotePinned(id = note.id, pinned = !note.pinned)
+            refresh(isActing = false)
+        }
+    }
+
+    fun softDelete() {
+        val id = noteId ?: return
+        viewModelScope.launch {
+            _state.update { it.copy(isActing = true) }
+            noteUseCases.softDeleteNote(id)
+            _state.update { it.copy(isActing = false, closeAfterAction = true) }
+        }
+    }
+
+    fun restore() {
+        val id = noteId ?: return
+        viewModelScope.launch {
+            _state.update { it.copy(isActing = true) }
+            noteUseCases.restoreDeletedNote(id)
+            refresh(isActing = false)
+        }
+    }
+
+    private fun refresh(isActing: Boolean = false) {
         viewModelScope.launch {
             val note = noteId?.let { noteUseCases.getNote(it) }
-            _state.update { it.copy(note = note, isLoading = false) }
+            val normalizedNote = if (note?.type == NoteType.Normal && note.isDone) {
+                note.copy(isDone = false, doneAt = null)
+            } else {
+                note
+            }
+            _state.update { it.copy(note = normalizedNote, isLoading = false, isActing = isActing) }
         }
     }
 }

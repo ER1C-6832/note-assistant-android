@@ -25,6 +25,10 @@ class NoteRepositoryImpl @Inject constructor(
         .observeActiveNotes()
         .map { entities -> entities.map { it.toDomain() } }
 
+    override fun observeDeletedNotes(): Flow<List<Note>> = noteDao
+        .observeDeletedNotes()
+        .map { entities -> entities.map { it.toDomain() } }
+
     override suspend fun getNote(id: Long): Note? = withContext(dispatchers.io) {
         noteDao.getNoteById(id)?.toDomain()
     }
@@ -42,6 +46,8 @@ class NoteRepositoryImpl @Inject constructor(
                 title = title.cleanedTitle(),
                 content = content.trim(),
                 type = type.toStorageValue(),
+                isDone = false,
+                doneAt = null,
                 color = color,
                 tagText = tagText.cleanedTagText(),
                 createdAt = now,
@@ -60,18 +66,85 @@ class NoteRepositoryImpl @Inject constructor(
         tagText: String,
     ) = withContext(dispatchers.io) {
         val existing = noteDao.getNoteById(id) ?: return@withContext
+        if (existing.deleted) return@withContext
         val now = timeProvider.nowMillis()
+        val normalizedIsDone = if (type == NoteType.Normal) false else existing.isDone
+        val normalizedDoneAt = if (type == NoteType.Normal || !normalizedIsDone) null else existing.doneAt
         noteDao.insertNote(
             existing.copy(
                 title = title.cleanedTitle(),
                 content = content.trim(),
                 type = type.toStorageValue(),
+                isDone = normalizedIsDone,
+                doneAt = normalizedDoneAt,
                 color = color,
                 tagText = tagText.cleanedTagText(),
                 updatedAt = now,
                 lastEditedSource = "manual",
             ),
         )
+    }
+
+    override suspend fun toggleTodoDone(id: Long, done: Boolean): Boolean = withContext(dispatchers.io) {
+        val existing = noteDao.getNoteById(id) ?: return@withContext false
+        if (existing.deleted || existing.type.lowercase() != "todo") return@withContext false
+        val now = timeProvider.nowMillis()
+        noteDao.insertNote(
+            existing.copy(
+                isDone = done,
+                doneAt = if (done) now else null,
+                updatedAt = now,
+                lastEditedSource = "manual",
+            ),
+        )
+        true
+    }
+
+    override suspend fun setPinned(id: Long, pinned: Boolean): Boolean = withContext(dispatchers.io) {
+        val existing = noteDao.getNoteById(id) ?: return@withContext false
+        if (existing.deleted) return@withContext false
+        if (existing.pinned == pinned) return@withContext true
+        val now = timeProvider.nowMillis()
+        noteDao.insertNote(
+            existing.copy(
+                pinned = pinned,
+                updatedAt = now,
+                lastEditedSource = "manual",
+            ),
+        )
+        true
+    }
+
+    override suspend fun softDelete(id: Long): Boolean = withContext(dispatchers.io) {
+        val existing = noteDao.getNoteById(id) ?: return@withContext false
+        if (existing.deleted) return@withContext true
+        val now = timeProvider.nowMillis()
+        noteDao.insertNote(
+            existing.copy(
+                deleted = true,
+                deletedAt = now,
+                archived = false,
+                archivedAt = null,
+                updatedAt = now,
+                lastEditedSource = "manual",
+            ),
+        )
+        true
+    }
+
+    override suspend fun restoreDeleted(id: Long): Boolean = withContext(dispatchers.io) {
+        val existing = noteDao.getNoteById(id) ?: return@withContext false
+        if (!existing.deleted) return@withContext true
+        val now = timeProvider.nowMillis()
+        noteDao.insertNote(
+            existing.copy(
+                deleted = false,
+                deletedAt = null,
+                updatedAt = now,
+                lastEditedSource = "manual",
+            ),
+        )
+        true
     }
 
     override suspend fun ensureDemoData() = withContext(dispatchers.io) {

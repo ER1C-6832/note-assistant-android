@@ -27,6 +27,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -40,17 +41,20 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.er1cmo.noteassistant.notes.domain.model.NoteType
+import com.er1cmo.noteassistant.notes.ui.R
 import com.er1cmo.noteassistant.notes.ui.components.NoteCard
 
 private const val FILTER_ALL = "全部"
 private const val FILTER_TODO = "待办"
 private const val FILTER_DONE = "已完成"
 private const val FILTER_PINNED = "置顶"
+private const val FILTER_DELETED = "最近删除"
 private const val TAG_PREFIX = "tag:"
 
 @Composable
@@ -67,6 +71,7 @@ fun NoteListRoute(
         onNoteClick = onNoteClick,
         onSettingsClick = onSettingsClick,
         onVoiceClick = {},
+        onTodoCheckedChange = viewModel::toggleTodoDone,
     )
 }
 
@@ -77,24 +82,21 @@ fun NoteListScreen(
     onNoteClick: (Long) -> Unit,
     onSettingsClick: () -> Unit,
     onVoiceClick: () -> Unit,
+    onTodoCheckedChange: (Long, Boolean) -> Unit,
 ) {
     var tagPanelOpen by remember { mutableStateOf(false) }
     var selectedFilter by remember { mutableStateOf(FILTER_ALL) }
-    BackHandler(enabled = tagPanelOpen) {
-        tagPanelOpen = false
-    }
-
     val tagNames = remember(state.notes) {
         state.notes
             .flatMap { note -> note.tags.map { it.name } }
             .map { it.trim() }
             .filter { it.isNotEmpty() }
-            .filterNot { it.isReservedTypeLabel() }
-            .distinctBy { it.lowercase() }
+            .distinct()
             .sorted()
     }
-    val displayNotes = remember(state.notes, selectedFilter) {
+    val displayNotes = remember(state.notes, state.deletedNotes, selectedFilter) {
         when {
+            selectedFilter == FILTER_DELETED -> state.deletedNotes
             selectedFilter == FILTER_TODO -> state.notes.filter { it.type == NoteType.Todo && !it.isDone }
             selectedFilter == FILTER_DONE -> state.notes.filter { it.type == NoteType.Todo && it.isDone }
             selectedFilter == FILTER_PINNED -> state.notes.filter { it.pinned }
@@ -104,6 +106,10 @@ fun NoteListScreen(
             }
             else -> state.notes
         }
+    }
+
+    BackHandler(enabled = tagPanelOpen) {
+        tagPanelOpen = false
     }
 
     Surface(color = Color.White, modifier = Modifier.fillMaxSize()) {
@@ -123,14 +129,21 @@ fun NoteListScreen(
                 )
 
                 if (displayNotes.isEmpty()) {
-                    EmptyNotes(onCreateClick = onCreateClick)
+                    EmptyNotes(
+                        selectedFilter = selectedFilter,
+                        onCreateClick = onCreateClick,
+                    )
                 } else {
                     LazyColumn(
                         modifier = Modifier.weight(1f),
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
                         items(displayNotes, key = { it.id }) { note ->
-                            NoteCard(note = note, onClick = { onNoteClick(note.id) })
+                            NoteCard(
+                                note = note,
+                                onClick = { onNoteClick(note.id) },
+                                onTodoCheckedChange = { done -> onTodoCheckedChange(note.id, done) },
+                            )
                         }
                         item { Spacer(Modifier.height(116.dp)) }
                     }
@@ -181,6 +194,7 @@ fun NoteListScreen(
                 TagDrawer(
                     selectedFilter = selectedFilter,
                     tagNames = tagNames,
+                    deletedCount = state.deletedNotes.size,
                     onFilterSelected = {
                         selectedFilter = it
                         tagPanelOpen = false
@@ -217,13 +231,18 @@ private fun HeaderBar(onSettingsClick: () -> Unit) {
         Surface(
             onClick = onSettingsClick,
             shape = CircleShape,
-            color = Color.White.copy(alpha = 0.92f),
+            color = Color.White.copy(alpha = 0.96f),
             shadowElevation = 2.dp,
             tonalElevation = 1.dp,
             modifier = Modifier.size(42.dp),
         ) {
             Box(contentAlignment = Alignment.Center) {
-                Text("⚙", style = MaterialTheme.typography.titleMedium, color = Color(0xFF667085))
+                Icon(
+                    painter = painterResource(id = R.drawable.ic_settings_gear_simple),
+                    contentDescription = "设置",
+                    modifier = Modifier.size(22.dp),
+                    tint = Color(0xFF667085),
+                )
             }
         }
     }
@@ -279,16 +298,15 @@ private fun FilterBar(
         Surface(
             onClick = onTagPanelClick,
             shape = RoundedCornerShape(16.dp),
-            color = Color(0xFFFFE5A8),
+            color = Color(0xFFFFE3A1),
             tonalElevation = 1.dp,
         ) {
             Text(
                 text = "☰",
-                modifier = Modifier.padding(horizontal = 17.dp, vertical = 10.dp),
+                modifier = Modifier.padding(horizontal = 18.dp, vertical = 11.dp),
                 style = MaterialTheme.typography.titleMedium,
                 color = Color(0xFF604410),
                 maxLines = 1,
-                softWrap = false,
             )
         }
         listOf(FILTER_ALL, FILTER_TODO, FILTER_DONE, FILTER_PINNED).forEach { filter ->
@@ -306,34 +324,37 @@ private fun FilterPill(text: String, selected: Boolean, onClick: () -> Unit) {
     Surface(
         onClick = onClick,
         shape = RoundedCornerShape(16.dp),
-        color = if (selected) Color(0xFFEADFFF) else Color.White,
-        border = if (selected) null else androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF575C66)),
+        color = if (selected) Color(0xFFEDE0FF) else Color.White,
+        border = androidx.compose.foundation.BorderStroke(1.dp, if (selected) Color.Transparent else Color(0xFF535864)),
         tonalElevation = if (selected) 1.dp else 0.dp,
     ) {
         Text(
             text = text,
             modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp),
-            style = MaterialTheme.typography.titleSmall,
-            color = Color(0xFF2D3340),
+            style = MaterialTheme.typography.labelLarge,
+            color = Color(0xFF222832),
             maxLines = 1,
-            softWrap = false,
         )
     }
 }
 
 @Composable
-private fun EmptyNotes(onCreateClick: () -> Unit) {
+private fun EmptyNotes(selectedFilter: String, onCreateClick: () -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(Color(0xFFF8F8F8), RoundedCornerShape(26.dp))
+            .background(Color(0xFFF6F7FB), RoundedCornerShape(26.dp))
             .padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Text("还没有便签", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-        Text("先记下一条想法、待办或临时信息。", color = Color(0xFF6B7280))
-        Button(onClick = onCreateClick, shape = RoundedCornerShape(18.dp)) {
-            Text("创建第一条便签")
+        val title = if (selectedFilter == FILTER_DELETED) "最近删除为空" else "还没有便签"
+        val description = if (selectedFilter == FILTER_DELETED) "软删除的便签会出现在这里。" else "先记下一条想法、待办或临时信息。"
+        Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+        Text(description, color = Color(0xFF6B7280))
+        if (selectedFilter != FILTER_DELETED) {
+            Button(onClick = onCreateClick, shape = RoundedCornerShape(18.dp)) {
+                Text("创建第一条便签")
+            }
         }
     }
 }
@@ -342,6 +363,7 @@ private fun EmptyNotes(onCreateClick: () -> Unit) {
 private fun TagDrawer(
     selectedFilter: String,
     tagNames: List<String>,
+    deletedCount: Int,
     onFilterSelected: (String) -> Unit,
 ) {
     Surface(
@@ -367,6 +389,11 @@ private fun TagDrawer(
                     onClick = { onFilterSelected(item) },
                 )
             }
+            TagDrawerRow(
+                text = "最近删除${if (deletedCount > 0) "  $deletedCount" else ""}",
+                selected = selectedFilter == FILTER_DELETED,
+                onClick = { onFilterSelected(FILTER_DELETED) },
+            )
             Spacer(Modifier.height(12.dp))
             Text("标签", style = MaterialTheme.typography.labelLarge, color = Color(0xFF8A7651))
             if (tagNames.isEmpty()) {
@@ -400,14 +427,7 @@ private fun TagDrawerRow(text: String, selected: Boolean, onClick: () -> Unit) {
             modifier = Modifier.weight(1f),
             color = if (selected) Color(0xFF3A2A08) else Color(0xFF4A3A20),
             style = MaterialTheme.typography.bodyLarge,
-            maxLines = 1,
-            softWrap = false,
         )
         if (selected) Text("✓", color = Color(0xFF5E4100), fontWeight = FontWeight.SemiBold)
     }
-}
-
-private fun String.isReservedTypeLabel(): Boolean = when (lowercase()) {
-    "待办", "todo", "普通", "normal" -> true
-    else -> false
 }

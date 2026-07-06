@@ -6,6 +6,7 @@ import kotlinx.coroutines.flow.Flow
 
 interface NoteRepository {
     fun observeActiveNotes(): Flow<List<Note>>
+    fun observeDeletedNotes(): Flow<List<Note>>
     suspend fun getNote(id: Long): Note?
     suspend fun createNote(
         title: String,
@@ -22,5 +23,9 @@ interface NoteRepository {
         color: String?,
         tagText: String,
     )
+    suspend fun toggleTodoDone(id: Long, done: Boolean): Boolean
+    suspend fun setPinned(id: Long, pinned: Boolean): Boolean
+    suspend fun softDelete(id: Long): Boolean
+    suspend fun restoreDeleted(id: Long): Boolean
     suspend fun ensureDemoData()
 }

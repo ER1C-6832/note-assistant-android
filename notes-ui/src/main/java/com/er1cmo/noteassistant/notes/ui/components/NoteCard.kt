@@ -31,12 +31,12 @@ import com.er1cmo.noteassistant.notes.domain.model.NoteType
 fun NoteCard(
     note: Note,
     onClick: () -> Unit,
+    onTodoCheckedChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val cardColor = NoteColorPalette.colorFor(note.color)
     val isTodo = note.type == NoteType.Todo
-    val contentAlpha = if (note.isDone) 0.55f else 1f
-    val displayTags = note.tags.filterNot { it.name.isReservedTypeLabel() }.take(3)
+    val contentAlpha = if (note.isDone) 0.58f else 1f
 
     Column(
         modifier = modifier
@@ -51,7 +51,7 @@ fun NoteCard(
             if (isTodo) {
                 Checkbox(
                     checked = note.isDone,
-                    onCheckedChange = null,
+                    onCheckedChange = onTodoCheckedChange,
                     modifier = Modifier.size(32.dp),
                 )
             }
@@ -81,12 +81,15 @@ fun NoteCard(
             overflow = TextOverflow.Ellipsis,
         )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            displayTags.forEach { tag ->
+            if (isTodo && note.isDone) {
+                SoftChip(text = "已完成")
+            }
+            note.tags.take(3).forEach { tag ->
                 SoftChip(text = tag.name)
             }
             Spacer(Modifier.weight(1f))
             Text(
-                text = "刚刚更新",
+                text = if (note.deleted) "最近删除" else "刚刚更新",
                 style = MaterialTheme.typography.labelSmall,
                 color = Color(0xFF8A8490),
             )
@@ -98,13 +101,8 @@ fun NoteCard(
 private fun SoftChip(text: String) {
     AssistChip(
         onClick = {},
-        label = { Text(text, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+        label = { Text(text) },
         colors = AssistChipDefaults.assistChipColors(containerColor = Color.White.copy(alpha = 0.62f)),
         border = null,
     )
-}
-
-private fun String.isReservedTypeLabel(): Boolean = when (lowercase()) {
-    "待办", "todo", "普通", "normal" -> true
-    else -> false
 }

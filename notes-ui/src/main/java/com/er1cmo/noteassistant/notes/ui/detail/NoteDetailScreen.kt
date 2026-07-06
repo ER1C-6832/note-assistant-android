@@ -17,12 +17,14 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.er1cmo.noteassistant.notes.domain.model.Note
@@ -36,10 +38,17 @@ fun NoteDetailRoute(
     viewModel: NoteDetailViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsState()
+    LaunchedEffect(state.closeAfterAction) {
+        if (state.closeAfterAction) onBackClick()
+    }
     NoteDetailScreen(
         state = state,
         onBackClick = onBackClick,
         onEditClick = onEditClick,
+        onDoneClick = viewModel::toggleDone,
+        onPinClick = viewModel::togglePinned,
+        onDeleteClick = viewModel::softDelete,
+        onRestoreClick = viewModel::restore,
     )
 }
 
@@ -48,6 +57,10 @@ fun NoteDetailScreen(
     state: NoteDetailState,
     onBackClick: () -> Unit,
     onEditClick: (Long) -> Unit,
+    onDoneClick: (Boolean) -> Unit,
+    onPinClick: () -> Unit,
+    onDeleteClick: () -> Unit,
+    onRestoreClick: () -> Unit,
 ) {
     Surface(color = Color.White, modifier = Modifier.fillMaxSize()) {
         Column(
@@ -57,16 +70,17 @@ fun NoteDetailScreen(
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "便签详情",
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.SemiBold,
-                        color = Color(0xFF222832),
-                    )
-                    Text("查看内容，需要修改时再进入编辑", style = MaterialTheme.typography.bodySmall, color = Color(0xFF7A7280))
-                }
                 OutlinedButton(onClick = onBackClick, shape = RoundedCornerShape(16.dp)) { Text("返回") }
+                Spacer(Modifier.weight(1f))
+                state.note?.let { note ->
+                    if (!note.deleted) {
+                        OutlinedButton(
+                            onClick = onPinClick,
+                            enabled = !state.isActing,
+                            shape = RoundedCornerShape(16.dp),
+                        ) { Text(if (note.pinned) "取消置顶" else "置顶") }
+                    }
+                }
             }
 
             when {
@@ -93,13 +107,14 @@ fun NoteDetailScreen(
                 else -> {
                     NoteDetailContent(note = state.note)
                     Spacer(Modifier.weight(1f))
-                    Button(
-                        onClick = { onEditClick(state.note.id) },
-                        shape = RoundedCornerShape(20.dp),
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Text("编辑便签")
-                    }
+                    NoteDetailActions(
+                        note = state.note,
+                        isActing = state.isActing,
+                        onEditClick = onEditClick,
+                        onDoneClick = onDoneClick,
+                        onDeleteClick = onDeleteClick,
+                        onRestoreClick = onRestoreClick,
+                    )
                 }
             }
         }
@@ -122,6 +137,7 @@ private fun NoteDetailContent(note: Note) {
                 modifier = Modifier.weight(1f),
                 style = MaterialTheme.typography.headlineSmall,
                 fontWeight = FontWeight.SemiBold,
+                textDecoration = if (note.isDone) TextDecoration.LineThrough else TextDecoration.None,
                 color = Color(0xFF20242C),
             )
             if (note.pinned) {
@@ -147,6 +163,59 @@ private fun NoteDetailContent(note: Note) {
                 style = MaterialTheme.typography.bodyMedium,
                 color = Color(0xFF5C6372),
             )
+        }
+        if (note.deleted) {
+            Text("这条便签已在最近删除中。", style = MaterialTheme.typography.bodySmall, color = Color(0xFF8A6B2D))
+        }
+    }
+}
+
+@Composable
+private fun NoteDetailActions(
+    note: Note,
+    isActing: Boolean,
+    onEditClick: (Long) -> Unit,
+    onDoneClick: (Boolean) -> Unit,
+    onDeleteClick: () -> Unit,
+    onRestoreClick: () -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        if (note.deleted) {
+            Button(
+                onClick = onRestoreClick,
+                enabled = !isActing,
+                shape = RoundedCornerShape(20.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("恢复便签")
+            }
+        } else {
+            if (note.type == NoteType.Todo) {
+                OutlinedButton(
+                    onClick = { onDoneClick(!note.isDone) },
+                    enabled = !isActing,
+                    shape = RoundedCornerShape(20.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(if (note.isDone) "取消完成" else "标记完成")
+                }
+            }
+            Button(
+                onClick = { onEditClick(note.id) },
+                enabled = !isActing,
+                shape = RoundedCornerShape(20.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("编辑便签")
+            }
+            OutlinedButton(
+                onClick = onDeleteClick,
+                enabled = !isActing,
+                shape = RoundedCornerShape(20.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("删除到最近删除")
+            }
         }
     }
 }

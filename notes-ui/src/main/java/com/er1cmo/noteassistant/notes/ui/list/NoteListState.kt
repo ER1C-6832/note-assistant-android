@@ -4,5 +4,6 @@ import com.er1cmo.noteassistant.notes.domain.model.Note
 
 data class NoteListState(
     val notes: List<Note> = emptyList(),
+    val deletedNotes: List<Note> = emptyList(),
     val isLoading: Boolean = true,
 )
