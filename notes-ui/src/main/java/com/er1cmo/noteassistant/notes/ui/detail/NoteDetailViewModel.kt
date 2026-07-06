@@ -3,6 +3,7 @@ package com.er1cmo.noteassistant.notes.ui.detail
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.er1cmo.noteassistant.notes.domain.model.Note
 import com.er1cmo.noteassistant.notes.domain.model.NoteType
 import com.er1cmo.noteassistant.notes.domain.usecase.NoteUseCases
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -23,54 +24,109 @@ class NoteDetailViewModel @Inject constructor(
     val state: StateFlow<NoteDetailState> = _state
 
     init {
-        refresh()
+        val id = noteId
+        if (id == null) {
+            _state.update { it.copy(isLoading = false, message = "便签已不存在") }
+        } else {
+            viewModelScope.launch {
+                noteUseCases.observeNote(id).collect { note ->
+                    val current = _state.value
+                    if (note == null) {
+                        _state.update { it.copy(note = null, isLoading = false, message = "便签已不存在") }
+                    } else if (!current.isDirty || current.isSaving || current.note?.id != note.id) {
+                        _state.value = note.toState(isSaving = false)
+                    } else {
+                        _state.update { it.copy(note = note, isLoading = false) }
+                    }
+                }
+            }
+        }
     }
 
-    fun toggleDone(done: Boolean) {
-        val id = noteId ?: return
+    fun updateTitle(value: String) {
+        _state.update { it.copy(titleInput = value, message = null) }
+    }
+
+    fun updateContent(value: String) {
+        _state.update { it.copy(contentInput = value, message = null) }
+    }
+
+    fun updateTagText(value: String) {
+        _state.update { it.copy(tagTextInput = value, message = null) }
+    }
+
+    fun saveTextFields() {
+        val current = _state.value
+        val note = current.note ?: return
+        if (current.isSaving || !current.isDirty) return
         viewModelScope.launch {
-            _state.update { it.copy(isActing = true) }
-            noteUseCases.toggleTodoDone(id = id, done = done)
-            refresh(isActing = false)
+            _state.update { it.copy(isSaving = true, message = null) }
+            noteUseCases.updateNote(
+                id = note.id,
+                title = current.titleInput,
+                content = current.contentInput,
+                type = note.type,
+                color = note.color,
+                tagText = current.tagTextInput,
+            )
+            _state.update { it.copy(isSaving = false, message = "已保存") }
+        }
+    }
+
+    fun changeType(type: NoteType) {
+        val current = _state.value
+        val note = current.note ?: return
+        if (current.isSaving || note.type == type) return
+        viewModelScope.launch {
+            _state.update { it.copy(isSaving = true, message = null) }
+            noteUseCases.updateNote(
+                id = note.id,
+                title = current.titleInput,
+                content = current.contentInput,
+                type = type,
+                color = note.color,
+                tagText = current.tagTextInput,
+            )
+            _state.update { it.copy(isSaving = false, message = "类型已更新") }
+        }
+    }
+
+    fun toggleDone() {
+        val note = _state.value.note ?: return
+        if (note.type != NoteType.Todo || note.deleted) return
+        viewModelScope.launch {
+            noteUseCases.toggleTodoDone(note.id, !note.isDone)
         }
     }
 
     fun togglePinned() {
         val note = _state.value.note ?: return
+        if (note.deleted) return
         viewModelScope.launch {
-            _state.update { it.copy(isActing = true) }
-            noteUseCases.setNotePinned(id = note.id, pinned = !note.pinned)
-            refresh(isActing = false)
+            noteUseCases.setNotePinned(note.id, !note.pinned)
         }
     }
 
     fun softDelete() {
-        val id = noteId ?: return
+        val note = _state.value.note ?: return
         viewModelScope.launch {
-            _state.update { it.copy(isActing = true) }
-            noteUseCases.softDeleteNote(id)
-            _state.update { it.copy(isActing = false, closeAfterAction = true) }
+            noteUseCases.softDeleteNote(note.id)
         }
     }
 
     fun restore() {
-        val id = noteId ?: return
+        val note = _state.value.note ?: return
         viewModelScope.launch {
-            _state.update { it.copy(isActing = true) }
-            noteUseCases.restoreDeletedNote(id)
-            refresh(isActing = false)
+            noteUseCases.restoreDeletedNote(note.id)
         }
     }
 
-    private fun refresh(isActing: Boolean = false) {
-        viewModelScope.launch {
-            val note = noteId?.let { noteUseCases.getNote(it) }
-            val normalizedNote = if (note?.type == NoteType.Normal && note.isDone) {
-                note.copy(isDone = false, doneAt = null)
-            } else {
-                note
-            }
-            _state.update { it.copy(note = normalizedNote, isLoading = false, isActing = isActing) }
-        }
-    }
+    private fun Note.toState(isSaving: Boolean): NoteDetailState = NoteDetailState(
+        note = this,
+        titleInput = title,
+        contentInput = content,
+        tagTextInput = tags.joinToString("、") { it.name },
+        isLoading = false,
+        isSaving = isSaving,
+    )
 }

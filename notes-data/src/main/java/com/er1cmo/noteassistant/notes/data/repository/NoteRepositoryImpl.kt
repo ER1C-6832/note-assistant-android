@@ -29,6 +29,10 @@ class NoteRepositoryImpl @Inject constructor(
         .observeDeletedNotes()
         .map { entities -> entities.map { it.toDomain() } }
 
+    override fun observeNote(id: Long): Flow<Note?> = noteDao
+        .observeNoteById(id)
+        .map { entity -> entity?.toDomain() }
+
     override suspend fun getNote(id: Long): Note? = withContext(dispatchers.io) {
         noteDao.getNoteById(id)?.toDomain()
     }
@@ -67,19 +71,28 @@ class NoteRepositoryImpl @Inject constructor(
     ) = withContext(dispatchers.io) {
         val existing = noteDao.getNoteById(id) ?: return@withContext
         if (existing.deleted) return@withContext
-        val now = timeProvider.nowMillis()
+
+        val cleanedTitle = title.cleanedTitle()
+        val cleanedContent = content.trim()
+        val cleanedTagText = tagText.cleanedTagText()
+        val normalizedType = type.toStorageValue()
         val normalizedIsDone = if (type == NoteType.Normal) false else existing.isDone
         val normalizedDoneAt = if (type == NoteType.Normal || !normalizedIsDone) null else existing.doneAt
+
+        val shouldTouchUpdatedAt = existing.title != cleanedTitle ||
+            existing.content != cleanedContent ||
+            existing.tagText.cleanedTagText() != cleanedTagText
+
         noteDao.insertNote(
             existing.copy(
-                title = title.cleanedTitle(),
-                content = content.trim(),
-                type = type.toStorageValue(),
+                title = cleanedTitle,
+                content = cleanedContent,
+                type = normalizedType,
                 isDone = normalizedIsDone,
                 doneAt = normalizedDoneAt,
                 color = color,
-                tagText = tagText.cleanedTagText(),
-                updatedAt = now,
+                tagText = cleanedTagText,
+                updatedAt = if (shouldTouchUpdatedAt) timeProvider.nowMillis() else existing.updatedAt,
                 lastEditedSource = "manual",
             ),
         )
@@ -88,12 +101,11 @@ class NoteRepositoryImpl @Inject constructor(
     override suspend fun toggleTodoDone(id: Long, done: Boolean): Boolean = withContext(dispatchers.io) {
         val existing = noteDao.getNoteById(id) ?: return@withContext false
         if (existing.deleted || existing.type.lowercase() != "todo") return@withContext false
-        val now = timeProvider.nowMillis()
         noteDao.insertNote(
             existing.copy(
                 isDone = done,
-                doneAt = if (done) now else null,
-                updatedAt = now,
+                doneAt = if (done) timeProvider.nowMillis() else null,
+                updatedAt = existing.updatedAt,
                 lastEditedSource = "manual",
             ),
         )
@@ -104,11 +116,10 @@ class NoteRepositoryImpl @Inject constructor(
         val existing = noteDao.getNoteById(id) ?: return@withContext false
         if (existing.deleted) return@withContext false
         if (existing.pinned == pinned) return@withContext true
-        val now = timeProvider.nowMillis()
         noteDao.insertNote(
             existing.copy(
                 pinned = pinned,
-                updatedAt = now,
+                updatedAt = existing.updatedAt,
                 lastEditedSource = "manual",
             ),
         )
@@ -118,14 +129,13 @@ class NoteRepositoryImpl @Inject constructor(
     override suspend fun softDelete(id: Long): Boolean = withContext(dispatchers.io) {
         val existing = noteDao.getNoteById(id) ?: return@withContext false
         if (existing.deleted) return@withContext true
-        val now = timeProvider.nowMillis()
         noteDao.insertNote(
             existing.copy(
                 deleted = true,
-                deletedAt = now,
+                deletedAt = timeProvider.nowMillis(),
                 archived = false,
                 archivedAt = null,
-                updatedAt = now,
+                updatedAt = existing.updatedAt,
                 lastEditedSource = "manual",
             ),
         )
@@ -135,12 +145,11 @@ class NoteRepositoryImpl @Inject constructor(
     override suspend fun restoreDeleted(id: Long): Boolean = withContext(dispatchers.io) {
         val existing = noteDao.getNoteById(id) ?: return@withContext false
         if (!existing.deleted) return@withContext true
-        val now = timeProvider.nowMillis()
         noteDao.insertNote(
             existing.copy(
                 deleted = false,
                 deletedAt = null,
-                updatedAt = now,
+                updatedAt = existing.updatedAt,
                 lastEditedSource = "manual",
             ),
         )

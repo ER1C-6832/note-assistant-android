@@ -6,6 +6,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import com.er1cmo.noteassistant.notes.ui.detail.NoteColorPickerRoute
 import com.er1cmo.noteassistant.notes.ui.detail.NoteDetailRoute
 import com.er1cmo.noteassistant.notes.ui.editor.NoteEditorRoute
 import com.er1cmo.noteassistant.notes.ui.list.NoteListRoute
@@ -38,8 +39,14 @@ fun AppNavigation() {
         ) {
             NoteDetailRoute(
                 onBackClick = { navController.popBackStack() },
-                onEditClick = { noteId -> navController.navigate(AppRoute.EditNote.createRoute(noteId)) },
+                onColorClick = { noteId -> navController.navigate(AppRoute.NoteColor.createRoute(noteId)) },
             )
+        }
+        composable(
+            route = AppRoute.NoteColor.route,
+            arguments = listOf(navArgument("noteId") { type = NavType.LongType }),
+        ) {
+            NoteColorPickerRoute(onBackClick = { navController.popBackStack() })
         }
         composable(AppRoute.Editor.route) {
             NoteEditorRoute(onBackClick = { navController.popBackStack() })

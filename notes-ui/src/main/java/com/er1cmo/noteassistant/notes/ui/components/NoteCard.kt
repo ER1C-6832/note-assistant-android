@@ -81,15 +81,12 @@ fun NoteCard(
             overflow = TextOverflow.Ellipsis,
         )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            if (isTodo && note.isDone) {
-                SoftChip(text = "已完成")
-            }
             note.tags.take(3).forEach { tag ->
                 SoftChip(text = tag.name)
             }
             Spacer(Modifier.weight(1f))
             Text(
-                text = if (note.deleted) "最近删除" else "刚刚更新",
+                text = if (note.deleted) "最近删除" else "已保存",
                 style = MaterialTheme.typography.labelSmall,
                 color = Color(0xFF8A8490),
             )
