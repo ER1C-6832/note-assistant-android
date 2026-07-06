@@ -29,7 +29,7 @@ fun SplashRoute(onSplashFinished: () -> Unit) {
         onSplashFinished()
     }
 
-    Surface(color = Color(0xFFF8F3EA), modifier = Modifier.fillMaxSize()) {
+    Surface(color = Color.White, modifier = Modifier.fillMaxSize()) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -60,7 +60,7 @@ private fun XiaohongRingLogo(sizeDp: Int) {
     Box(
         modifier = Modifier
             .size(sizeDp.dp)
-            .background(Color.White.copy(alpha = 0.82f), CircleShape),
+            .background(Color.White, CircleShape),
         contentAlignment = Alignment.Center,
     ) {
         Box(
@@ -72,7 +72,7 @@ private fun XiaohongRingLogo(sizeDp: Int) {
             Box(
                 modifier = Modifier
                     .size((sizeDp * 0.28f).dp)
-                    .background(Color(0xFFF8F3EA), CircleShape),
+                    .background(Color.White, CircleShape),
             )
         }
     }

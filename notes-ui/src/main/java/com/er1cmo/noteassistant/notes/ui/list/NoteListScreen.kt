@@ -25,6 +25,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -38,11 +39,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.er1cmo.noteassistant.notes.domain.model.NoteType
+import com.er1cmo.noteassistant.notes.ui.R
 import com.er1cmo.noteassistant.notes.ui.components.NoteCard
 
 private const val FILTER_ALL = "全部"
@@ -99,7 +102,7 @@ fun NoteListScreen(
         }
     }
 
-    Surface(color = Color(0xFFF8F3EA), modifier = Modifier.fillMaxSize()) {
+    Surface(color = Color.White, modifier = Modifier.fillMaxSize()) {
         Box(modifier = Modifier.fillMaxSize()) {
             Column(
                 modifier = Modifier
@@ -162,7 +165,7 @@ fun NoteListScreen(
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .background(Color.Black.copy(alpha = 0.16f))
+                        .background(Color.Black.copy(alpha = 0.14f))
                         .clickable(onClick = { tagPanelOpen = false }),
                 )
             }
@@ -210,13 +213,18 @@ private fun HeaderBar(onSettingsClick: () -> Unit) {
         Surface(
             onClick = onSettingsClick,
             shape = CircleShape,
-            color = Color.White.copy(alpha = 0.92f),
+            color = Color.White,
             shadowElevation = 2.dp,
             tonalElevation = 1.dp,
             modifier = Modifier.size(42.dp),
         ) {
             Box(contentAlignment = Alignment.Center) {
-                Text("⚙", style = MaterialTheme.typography.titleMedium, color = Color(0xFF667085))
+                Icon(
+                    painter = painterResource(id = R.drawable.ic_settings_gear),
+                    contentDescription = "设置",
+                    tint = Color(0xFF667085),
+                    modifier = Modifier.size(21.dp),
+                )
             }
         }
     }
@@ -227,7 +235,7 @@ private fun RingLogo(size: Int) {
     Box(
         modifier = Modifier
             .size(size.dp)
-            .background(Color.White.copy(alpha = 0.9f), CircleShape),
+            .background(Color.White, CircleShape),
         contentAlignment = Alignment.Center,
     ) {
         Box(
@@ -239,7 +247,7 @@ private fun RingLogo(size: Int) {
             Box(
                 modifier = Modifier
                     .size((size * 0.28f).dp)
-                    .background(Color(0xFFF8F3EA), CircleShape),
+                    .background(Color.White, CircleShape),
             )
         }
     }
@@ -250,7 +258,7 @@ private fun SearchBox() {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(Color.White.copy(alpha = 0.92f), RoundedCornerShape(22.dp))
+            .background(Color(0xFFF7F8FB), RoundedCornerShape(22.dp))
             .padding(horizontal = 16.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -264,16 +272,16 @@ private fun FilterBar(
     onTagPanelClick: () -> Unit,
     onFilterSelected: (String) -> Unit,
 ) {
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(horizontalArrangement = Arrangement.spacedBy(7.dp), verticalAlignment = Alignment.CenterVertically) {
         Surface(
             onClick = onTagPanelClick,
-            shape = RoundedCornerShape(16.dp),
+            shape = RoundedCornerShape(15.dp),
             color = Color(0xFFFFE5A8),
             tonalElevation = 1.dp,
         ) {
             Text(
-                text = "☰ 标签",
-                modifier = Modifier.padding(horizontal = 13.dp, vertical = 9.dp),
+                text = "☰",
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
                 style = MaterialTheme.typography.labelLarge,
                 color = Color(0xFF604410),
             )
@@ -293,7 +301,7 @@ private fun EmptyNotes(onCreateClick: () -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(Color.White.copy(alpha = 0.92f), RoundedCornerShape(26.dp))
+            .background(Color(0xFFF7F8FB), RoundedCornerShape(26.dp))
             .padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
