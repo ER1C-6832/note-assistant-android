@@ -1,0 +1,9 @@
+<resources>
+    <style name="Theme.NoteAssistant" parent="android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:windowActionBar">false</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:statusBarColor">#F3F6FB</item>
+        <item name="android:navigationBarColor">#F3F6FB</item>
+    </style>
+</resources>
