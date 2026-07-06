@@ -36,6 +36,7 @@ fun NoteCard(
     val cardColor = NoteColorPalette.colorFor(note.color)
     val isTodo = note.type == NoteType.Todo
     val contentAlpha = if (note.isDone) 0.55f else 1f
+    val displayTags = note.tags.filterNot { it.name.isReservedTypeLabel() }.take(3)
 
     Column(
         modifier = modifier
@@ -80,10 +81,7 @@ fun NoteCard(
             overflow = TextOverflow.Ellipsis,
         )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            if (isTodo) {
-                SoftChip(text = "待办")
-            }
-            note.tags.take(3).forEach { tag ->
+            displayTags.forEach { tag ->
                 SoftChip(text = tag.name)
             }
             Spacer(Modifier.weight(1f))
@@ -100,8 +98,13 @@ fun NoteCard(
 private fun SoftChip(text: String) {
     AssistChip(
         onClick = {},
-        label = { Text(text) },
+        label = { Text(text, maxLines = 1, overflow = TextOverflow.Ellipsis) },
         colors = AssistChipDefaults.assistChipColors(containerColor = Color.White.copy(alpha = 0.62f)),
         border = null,
     )
+}
+
+private fun String.isReservedTypeLabel(): Boolean = when (lowercase()) {
+    "待办", "todo", "普通", "normal" -> true
+    else -> false
 }

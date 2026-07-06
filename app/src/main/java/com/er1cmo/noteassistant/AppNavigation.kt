@@ -6,6 +6,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import com.er1cmo.noteassistant.notes.ui.detail.NoteDetailRoute
 import com.er1cmo.noteassistant.notes.ui.editor.NoteEditorRoute
 import com.er1cmo.noteassistant.notes.ui.list.NoteListRoute
 import com.er1cmo.noteassistant.notes.ui.settings.SettingsRoute
@@ -27,8 +28,17 @@ fun AppNavigation() {
         composable(AppRoute.Notes.route) {
             NoteListRoute(
                 onCreateClick = { navController.navigate(AppRoute.Editor.route) },
-                onNoteClick = { noteId -> navController.navigate(AppRoute.EditNote.createRoute(noteId)) },
+                onNoteClick = { noteId -> navController.navigate(AppRoute.Detail.createRoute(noteId)) },
                 onSettingsClick = { navController.navigate(AppRoute.Settings.route) },
+            )
+        }
+        composable(
+            route = AppRoute.Detail.route,
+            arguments = listOf(navArgument("noteId") { type = NavType.LongType }),
+        ) {
+            NoteDetailRoute(
+                onBackClick = { navController.popBackStack() },
+                onEditClick = { noteId -> navController.navigate(AppRoute.EditNote.createRoute(noteId)) },
             )
         }
         composable(AppRoute.Editor.route) {

@@ -47,4 +47,10 @@ internal fun String.splitTags(): List<String> = trim()
     .split(Regex("[\\s,，、#]+"))
     .map { it.trim() }
     .filter { it.isNotEmpty() }
+    .filterNot { it.isReservedNoteTypeTag() }
     .distinctBy { it.lowercase() }
+
+private fun String.isReservedNoteTypeTag(): Boolean = when (lowercase()) {
+    "待办", "todo", "普通", "normal" -> true
+    else -> false
+}

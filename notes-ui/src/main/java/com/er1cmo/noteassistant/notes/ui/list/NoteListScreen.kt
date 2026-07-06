@@ -1,10 +1,12 @@
 package com.er1cmo.noteassistant.notes.ui.list
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,13 +21,12 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -39,13 +40,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.er1cmo.noteassistant.notes.domain.model.NoteType
-import com.er1cmo.noteassistant.notes.ui.R
 import com.er1cmo.noteassistant.notes.ui.components.NoteCard
 
 private const val FILTER_ALL = "全部"
@@ -81,12 +80,17 @@ fun NoteListScreen(
 ) {
     var tagPanelOpen by remember { mutableStateOf(false) }
     var selectedFilter by remember { mutableStateOf(FILTER_ALL) }
+    BackHandler(enabled = tagPanelOpen) {
+        tagPanelOpen = false
+    }
+
     val tagNames = remember(state.notes) {
         state.notes
             .flatMap { note -> note.tags.map { it.name } }
             .map { it.trim() }
             .filter { it.isNotEmpty() }
-            .distinct()
+            .filterNot { it.isReservedTypeLabel() }
+            .distinctBy { it.lowercase() }
             .sorted()
     }
     val displayNotes = remember(state.notes, selectedFilter) {
@@ -165,7 +169,7 @@ fun NoteListScreen(
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .background(Color.Black.copy(alpha = 0.14f))
+                        .background(Color.Black.copy(alpha = 0.16f))
                         .clickable(onClick = { tagPanelOpen = false }),
                 )
             }
@@ -213,18 +217,13 @@ private fun HeaderBar(onSettingsClick: () -> Unit) {
         Surface(
             onClick = onSettingsClick,
             shape = CircleShape,
-            color = Color.White,
+            color = Color.White.copy(alpha = 0.92f),
             shadowElevation = 2.dp,
             tonalElevation = 1.dp,
             modifier = Modifier.size(42.dp),
         ) {
             Box(contentAlignment = Alignment.Center) {
-                Icon(
-                    painter = painterResource(id = R.drawable.ic_settings_gear),
-                    contentDescription = "设置",
-                    tint = Color(0xFF667085),
-                    modifier = Modifier.size(21.dp),
-                )
+                Text("⚙", style = MaterialTheme.typography.titleMedium, color = Color(0xFF667085))
             }
         }
     }
@@ -235,7 +234,7 @@ private fun RingLogo(size: Int) {
     Box(
         modifier = Modifier
             .size(size.dp)
-            .background(Color.White, CircleShape),
+            .background(Color.White.copy(alpha = 0.9f), CircleShape),
         contentAlignment = Alignment.Center,
     ) {
         Box(
@@ -258,7 +257,7 @@ private fun SearchBox() {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(Color(0xFFF7F8FB), RoundedCornerShape(22.dp))
+            .background(Color(0xFFF6F7FB), RoundedCornerShape(22.dp))
             .padding(horizontal = 16.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -272,27 +271,53 @@ private fun FilterBar(
     onTagPanelClick: () -> Unit,
     onFilterSelected: (String) -> Unit,
 ) {
-    Row(horizontalArrangement = Arrangement.spacedBy(7.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(
+        modifier = Modifier.horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
         Surface(
             onClick = onTagPanelClick,
-            shape = RoundedCornerShape(15.dp),
+            shape = RoundedCornerShape(16.dp),
             color = Color(0xFFFFE5A8),
             tonalElevation = 1.dp,
         ) {
             Text(
                 text = "☰",
-                modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
-                style = MaterialTheme.typography.labelLarge,
+                modifier = Modifier.padding(horizontal = 17.dp, vertical = 10.dp),
+                style = MaterialTheme.typography.titleMedium,
                 color = Color(0xFF604410),
+                maxLines = 1,
+                softWrap = false,
             )
         }
         listOf(FILTER_ALL, FILTER_TODO, FILTER_DONE, FILTER_PINNED).forEach { filter ->
-            FilterChip(
+            FilterPill(
+                text = filter,
                 selected = selectedFilter == filter,
                 onClick = { onFilterSelected(filter) },
-                label = { Text(filter) },
             )
         }
+    }
+}
+
+@Composable
+private fun FilterPill(text: String, selected: Boolean, onClick: () -> Unit) {
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(16.dp),
+        color = if (selected) Color(0xFFEADFFF) else Color.White,
+        border = if (selected) null else androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF575C66)),
+        tonalElevation = if (selected) 1.dp else 0.dp,
+    ) {
+        Text(
+            text = text,
+            modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp),
+            style = MaterialTheme.typography.titleSmall,
+            color = Color(0xFF2D3340),
+            maxLines = 1,
+            softWrap = false,
+        )
     }
 }
 
@@ -301,7 +326,7 @@ private fun EmptyNotes(onCreateClick: () -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(Color(0xFFF7F8FB), RoundedCornerShape(26.dp))
+            .background(Color(0xFFF8F8F8), RoundedCornerShape(26.dp))
             .padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
@@ -375,7 +400,14 @@ private fun TagDrawerRow(text: String, selected: Boolean, onClick: () -> Unit) {
             modifier = Modifier.weight(1f),
             color = if (selected) Color(0xFF3A2A08) else Color(0xFF4A3A20),
             style = MaterialTheme.typography.bodyLarge,
+            maxLines = 1,
+            softWrap = false,
         )
         if (selected) Text("✓", color = Color(0xFF5E4100), fontWeight = FontWeight.SemiBold)
     }
+}
+
+private fun String.isReservedTypeLabel(): Boolean = when (lowercase()) {
+    "待办", "todo", "普通", "normal" -> true
+    else -> false
 }

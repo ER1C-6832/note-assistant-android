@@ -84,7 +84,7 @@ class NoteRepositoryImpl @Inject constructor(
                     content = "明天上午十点联系王总，确认屏幕报价。",
                     type = "todo",
                     color = "#FFF2B8",
-                    tagText = "客户、待办",
+                    tagText = "客户",
                     pinned = true,
                     createdAt = now - 1000L * 60 * 60,
                     updatedAt = now,

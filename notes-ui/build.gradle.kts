@@ -39,6 +39,7 @@ dependencies {
     implementation(project(":notes-domain"))
     implementation(project(":assistant-runtime"))
     implementation(libs.androidx.core.ktx)
+    implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.hilt.navigation.compose)
     implementation(libs.kotlinx.coroutines.android)
