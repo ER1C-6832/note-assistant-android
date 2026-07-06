@@ -19,6 +19,7 @@ data class NoteEntity(
     @ColumnInfo(name = "archived_at") val archivedAt: Long? = null,
     @ColumnInfo(name = "deleted_at") val deletedAt: Long? = null,
     val color: String? = null,
+    @ColumnInfo(name = "tag_text", defaultValue = "") val tagText: String = "",
     @ColumnInfo(name = "reminder_at") val reminderAt: Long? = null,
     @ColumnInfo(name = "sort_order") val sortOrder: Long? = null,
     @ColumnInfo(name = "created_at") val createdAt: Long,

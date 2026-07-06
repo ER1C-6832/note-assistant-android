@@ -13,11 +13,13 @@ class UpdateNoteUseCase @Inject constructor(
         content: String,
         type: NoteType,
         color: String?,
+        tagText: String,
     ) = repository.updateNote(
         id = id,
         title = title,
         content = content,
         type = type,
         color = color,
+        tagText = tagText,
     )
 }

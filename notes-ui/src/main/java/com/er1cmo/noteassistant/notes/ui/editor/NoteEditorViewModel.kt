@@ -31,6 +31,7 @@ class NoteEditorViewModel @Inject constructor(
                         noteId = note.id,
                         title = note.title,
                         content = note.content,
+                        tagText = note.tags.joinToString("、") { it.name },
                         type = note.type,
                         color = note.color ?: NoteEditorState().color,
                         isLoading = false,
@@ -48,6 +49,10 @@ class NoteEditorViewModel @Inject constructor(
 
     fun updateContent(content: String) {
         _state.update { it.copy(content = content, saved = false) }
+    }
+
+    fun updateTagText(tagText: String) {
+        _state.update { it.copy(tagText = tagText, saved = false) }
     }
 
     fun updateType(type: NoteType) {
@@ -69,6 +74,7 @@ class NoteEditorViewModel @Inject constructor(
                     content = current.content,
                     type = current.type,
                     color = current.color,
+                    tagText = current.tagText,
                 )
             } else {
                 noteUseCases.updateNote(
@@ -77,6 +83,7 @@ class NoteEditorViewModel @Inject constructor(
                     content = current.content,
                     type = current.type,
                     color = current.color,
+                    tagText = current.tagText,
                 )
             }
             _state.update { it.copy(isSaving = false, saved = true) }

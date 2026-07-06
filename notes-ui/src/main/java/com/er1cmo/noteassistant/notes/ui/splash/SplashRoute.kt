@@ -7,7 +7,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -15,7 +15,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -26,11 +25,11 @@ private const val SLOGAN = "为记录而生，也为效率而来"
 @Composable
 fun SplashRoute(onSplashFinished: () -> Unit) {
     LaunchedEffect(Unit) {
-        delay(850)
+        delay(720)
         onSplashFinished()
     }
 
-    Surface(color = Color(0xFFF5F6FA), modifier = Modifier.fillMaxSize()) {
+    Surface(color = Color(0xFFF8F3EA), modifier = Modifier.fillMaxSize()) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -38,31 +37,42 @@ fun SplashRoute(onSplashFinished: () -> Unit) {
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center,
         ) {
-            Box(
-                modifier = Modifier
-                    .size(92.dp)
-                    .background(
-                        brush = Brush.linearGradient(
-                            colors = listOf(Color(0xFF5B6CFF), Color(0xFF8DC7FF)),
-                        ),
-                        shape = RoundedCornerShape(28.dp),
-                    ),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text("泓", color = Color.White, style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
-            }
+            XiaohongRingLogo(sizeDp = 96)
             Text(
                 text = "小泓便签",
                 modifier = Modifier.padding(top = 22.dp),
                 style = MaterialTheme.typography.headlineMedium,
-                fontWeight = FontWeight.Bold,
-                color = Color(0xFF1F2937),
+                fontWeight = FontWeight.SemiBold,
+                color = Color(0xFF252A35),
             )
             Text(
                 text = SLOGAN,
                 modifier = Modifier.padding(top = 8.dp),
                 style = MaterialTheme.typography.bodyMedium,
-                color = Color(0xFF697386),
+                color = Color(0xFF737B89),
+            )
+        }
+    }
+}
+
+@Composable
+private fun XiaohongRingLogo(sizeDp: Int) {
+    Box(
+        modifier = Modifier
+            .size(sizeDp.dp)
+            .background(Color.White.copy(alpha = 0.82f), CircleShape),
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(
+            modifier = Modifier
+                .size((sizeDp * 0.58f).dp)
+                .background(Color(0xFF5272FF), CircleShape),
+            contentAlignment = Alignment.Center,
+        ) {
+            Box(
+                modifier = Modifier
+                    .size((sizeDp * 0.28f).dp)
+                    .background(Color(0xFFF8F3EA), CircleShape),
             )
         }
     }

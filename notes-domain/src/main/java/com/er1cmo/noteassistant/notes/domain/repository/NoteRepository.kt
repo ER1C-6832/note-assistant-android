@@ -12,6 +12,7 @@ interface NoteRepository {
         content: String,
         type: NoteType,
         color: String?,
+        tagText: String,
     ): Long
     suspend fun updateNote(
         id: Long,
@@ -19,6 +20,7 @@ interface NoteRepository {
         content: String,
         type: NoteType,
         color: String?,
+        tagText: String,
     )
     suspend fun ensureDemoData()
 }

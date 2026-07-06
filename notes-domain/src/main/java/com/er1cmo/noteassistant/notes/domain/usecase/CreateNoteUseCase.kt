@@ -12,10 +12,12 @@ class CreateNoteUseCase @Inject constructor(
         content: String,
         type: NoteType,
         color: String?,
+        tagText: String,
     ): Long = repository.createNote(
         title = title,
         content = content,
         type = type,
         color = color,
+        tagText = tagText,
     )
 }

@@ -8,8 +8,10 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
@@ -43,6 +45,7 @@ fun NoteEditorRoute(
         state = state,
         onTitleChange = viewModel::updateTitle,
         onContentChange = viewModel::updateContent,
+        onTagTextChange = viewModel::updateTagText,
         onTypeChange = viewModel::updateType,
         onColorChange = viewModel::updateColor,
         onSaveClick = viewModel::save,
@@ -55,26 +58,28 @@ fun NoteEditorScreen(
     state: NoteEditorState,
     onTitleChange: (String) -> Unit,
     onContentChange: (String) -> Unit,
+    onTagTextChange: (String) -> Unit,
     onTypeChange: (NoteType) -> Unit,
     onColorChange: (String) -> Unit,
     onSaveClick: () -> Unit,
     onBackClick: () -> Unit,
 ) {
-    Surface(color = Color(0xFFF5F6FA), modifier = Modifier.fillMaxSize()) {
+    Surface(color = Color(0xFFF8F3EA), modifier = Modifier.fillMaxSize()) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 16.dp, vertical = 22.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+                .padding(horizontal = 18.dp, vertical = 22.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = if (state.noteId == null) "新建便签" else "编辑便签",
-                        style = MaterialTheme.typography.headlineSmall,
-                        fontWeight = FontWeight.Bold,
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color(0xFF222832),
                     )
-                    Text("标题、正文、类型和颜色", style = MaterialTheme.typography.bodySmall, color = Color(0xFF697386))
+                    Text("标题、正文、标签、类型和颜色", style = MaterialTheme.typography.bodySmall, color = Color(0xFF7A7280))
                 }
                 OutlinedButton(onClick = onBackClick, shape = RoundedCornerShape(16.dp)) { Text("返回") }
             }
@@ -82,7 +87,9 @@ fun NoteEditorScreen(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .background(Color.White, RoundedCornerShape(24.dp))
+                    .weight(1f)
+                    .background(Color.White.copy(alpha = 0.94f), RoundedCornerShape(26.dp))
+                    .verticalScroll(rememberScrollState())
                     .padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
@@ -97,15 +104,22 @@ fun NoteEditorScreen(
                 OutlinedTextField(
                     value = state.content,
                     onValueChange = onContentChange,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f, fill = false),
+                    modifier = Modifier.fillMaxWidth(),
                     label = { Text("正文") },
                     placeholder = { Text("写下想法、信息或待办详情") },
                     minLines = 7,
                 )
+                OutlinedTextField(
+                    value = state.tagText,
+                    onValueChange = onTagTextChange,
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("标签") },
+                    placeholder = { Text("例如：客户、硬件、灵感") },
+                    supportingText = { Text("多个标签可用顿号、逗号或空格分隔。") },
+                    singleLine = true,
+                )
 
-                Text("便签类型", style = MaterialTheme.typography.labelLarge, color = Color(0xFF6B7280))
+                Text("便签类型", style = MaterialTheme.typography.labelLarge, color = Color(0xFF6B5F4A))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     FilterChip(
                         selected = state.type == NoteType.Normal,
@@ -119,15 +133,14 @@ fun NoteEditorScreen(
                     )
                 }
 
-                Text("颜色", style = MaterialTheme.typography.labelLarge, color = Color(0xFF6B7280))
+                Text("颜色", style = MaterialTheme.typography.labelLarge, color = Color(0xFF6B5F4A))
                 ColorGrid(selectedHex = state.color, onColorChange = onColorChange)
             }
 
-            Spacer(Modifier.weight(1f))
             Button(
                 onClick = onSaveClick,
                 enabled = !state.isSaving && (state.title.isNotBlank() || state.content.isNotBlank()),
-                shape = RoundedCornerShape(18.dp),
+                shape = RoundedCornerShape(20.dp),
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Text(if (state.isSaving) "保存中……" else "保存便签")

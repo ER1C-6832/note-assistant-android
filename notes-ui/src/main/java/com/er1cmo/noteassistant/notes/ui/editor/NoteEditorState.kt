@@ -7,6 +7,7 @@ data class NoteEditorState(
     val noteId: Long? = null,
     val title: String = "",
     val content: String = "",
+    val tagText: String = "",
     val type: NoteType = NoteType.Normal,
     val color: String = NoteColorPalette.default.hex,
     val isLoading: Boolean = false,

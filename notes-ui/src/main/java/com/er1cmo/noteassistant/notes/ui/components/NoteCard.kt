@@ -40,7 +40,7 @@ fun NoteCard(
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .background(cardColor, RoundedCornerShape(22.dp))
+            .background(cardColor, RoundedCornerShape(24.dp))
             .clickable(onClick = onClick)
             .padding(16.dp)
             .alpha(contentAlpha),
@@ -58,10 +58,11 @@ fun NoteCard(
                 text = note.title.ifBlank { "未命名便签" },
                 modifier = Modifier.weight(1f),
                 style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
+                fontWeight = FontWeight.SemiBold,
                 textDecoration = if (note.isDone) TextDecoration.LineThrough else TextDecoration.None,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
+                color = Color(0xFF20242C),
             )
             if (note.pinned) {
                 Text(
@@ -69,42 +70,38 @@ fun NoteCard(
                     style = MaterialTheme.typography.labelMedium,
                     color = Color(0xFF7C5C00),
                 )
-            } else {
-                Text(
-                    text = "便签",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = Color(0xFF8A94A6),
-                )
             }
         }
         Text(
             text = note.content.ifBlank { "暂无正文" },
             style = MaterialTheme.typography.bodyMedium,
-            color = Color(0xFF374151),
+            color = Color(0xFF404756),
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
         )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            AssistChip(
-                onClick = {},
-                label = { Text(if (isTodo) "待办" else "普通") },
-                colors = AssistChipDefaults.assistChipColors(containerColor = Color.White.copy(alpha = 0.56f)),
-                border = null,
-            )
-            if (note.title.contains("王总") || note.content.contains("客户")) {
-                AssistChip(
-                    onClick = {},
-                    label = { Text("客户") },
-                    colors = AssistChipDefaults.assistChipColors(containerColor = Color.White.copy(alpha = 0.56f)),
-                    border = null,
-                )
+            if (isTodo) {
+                SoftChip(text = "待办")
+            }
+            note.tags.take(3).forEach { tag ->
+                SoftChip(text = tag.name)
             }
             Spacer(Modifier.weight(1f))
             Text(
                 text = "刚刚更新",
                 style = MaterialTheme.typography.labelSmall,
-                color = Color(0xFF7B8494),
+                color = Color(0xFF8A8490),
             )
         }
     }
+}
+
+@Composable
+private fun SoftChip(text: String) {
+    AssistChip(
+        onClick = {},
+        label = { Text(text) },
+        colors = AssistChipDefaults.assistChipColors(containerColor = Color.White.copy(alpha = 0.62f)),
+        border = null,
+    )
 }
