@@ -8,5 +8,5 @@ import com.er1cmo.noteassistant.notes.data.entity.NoteTagCrossRefEntity
 @Dao
 interface NoteTagDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE)
-    suspend fun insertAll(crossRefs: List<NoteTagCrossRefEntity>)
+    fun insertAll(crossRefs: List<NoteTagCrossRefEntity>)
 }

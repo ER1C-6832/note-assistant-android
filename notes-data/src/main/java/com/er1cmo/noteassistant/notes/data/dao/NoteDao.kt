@@ -13,8 +13,8 @@ interface NoteDao {
     fun observeActiveNotes(): Flow<List<NoteEntity>>
 
     @Query("SELECT COUNT(*) FROM notes")
-    suspend fun countNotes(): Int
+    fun countNotes(): Int
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insertNotes(notes: List<NoteEntity>)
+    fun insertNotes(notes: List<NoteEntity>)
 }

@@ -9,8 +9,8 @@ import com.er1cmo.noteassistant.notes.data.entity.TagEntity
 @Dao
 interface TagDao {
     @Query("SELECT * FROM tags ORDER BY name ASC")
-    suspend fun listTags(): List<TagEntity>
+    fun listTags(): List<TagEntity>
 
     @Insert(onConflict = OnConflictStrategy.IGNORE)
-    suspend fun insertTags(tags: List<TagEntity>): List<Long>
+    fun insertTags(tags: List<TagEntity>)
 }

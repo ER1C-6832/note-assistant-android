@@ -1,8 +1,9 @@
 plugins {
     alias(libs.plugins.android.library)
     alias(libs.plugins.kotlin.android)
-    alias(libs.plugins.hilt)
+    alias(libs.plugins.kotlin.kapt)
     alias(libs.plugins.ksp)
+    alias(libs.plugins.hilt)
 }
 
 android {
@@ -23,21 +24,17 @@ android {
     }
 }
 
-dependencies {
-    implementation(libs.hilt.android)
-    ksp(libs.hilt.compiler)
+kapt {
+    correctErrorTypes = true
 }
 
-
 dependencies {
+    implementation(libs.hilt.android)
+    kapt(libs.hilt.compiler)
     implementation(project(":core-common"))
     implementation(project(":notes-domain"))
     implementation(libs.androidx.room.runtime)
     implementation(libs.androidx.room.ktx)
-    ksp(libs.androidx.room.compiler)
-}
-
-
-dependencies {
     implementation(libs.kotlinx.coroutines.android)
+    ksp(libs.androidx.room.compiler)
 }
