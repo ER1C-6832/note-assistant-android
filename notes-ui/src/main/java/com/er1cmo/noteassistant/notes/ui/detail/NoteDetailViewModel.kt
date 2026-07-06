@@ -34,7 +34,7 @@ class NoteDetailViewModel @Inject constructor(
                     if (note == null) {
                         _state.update { it.copy(note = null, isLoading = false, message = "便签已不存在") }
                     } else if (!current.isDirty || current.isSaving || current.note?.id != note.id) {
-                        _state.value = note.toState(isSaving = false)
+                        _state.value = note.toState(isSaving = false, message = current.message)
                     } else {
                         _state.update { it.copy(note = note, isLoading = false) }
                     }
@@ -69,7 +69,12 @@ class NoteDetailViewModel @Inject constructor(
                 color = note.color,
                 tagText = current.tagTextInput,
             )
-            _state.update { it.copy(isSaving = false, message = "已保存") }
+            val updated = noteUseCases.getNote(note.id)
+            if (updated != null) {
+                _state.value = updated.toState(isSaving = false, message = "已保存")
+            } else {
+                _state.update { it.copy(isSaving = false, message = "便签已不存在") }
+            }
         }
     }
 
@@ -87,7 +92,12 @@ class NoteDetailViewModel @Inject constructor(
                 color = note.color,
                 tagText = current.tagTextInput,
             )
-            _state.update { it.copy(isSaving = false, message = "类型已更新") }
+            val updated = noteUseCases.getNote(note.id)
+            if (updated != null) {
+                _state.value = updated.toState(isSaving = false, message = "类型已更新")
+            } else {
+                _state.update { it.copy(isSaving = false, message = "便签已不存在") }
+            }
         }
     }
 
@@ -121,12 +131,13 @@ class NoteDetailViewModel @Inject constructor(
         }
     }
 
-    private fun Note.toState(isSaving: Boolean): NoteDetailState = NoteDetailState(
+    private fun Note.toState(isSaving: Boolean, message: String? = null): NoteDetailState = NoteDetailState(
         note = this,
         titleInput = title,
         contentInput = content,
         tagTextInput = tags.joinToString("、") { it.name },
         isLoading = false,
         isSaving = isSaving,
+        message = message,
     )
 }

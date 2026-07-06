@@ -4,6 +4,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -24,6 +25,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FloatingActionButton
@@ -47,6 +49,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.er1cmo.noteassistant.notes.domain.model.NoteType
+import com.er1cmo.noteassistant.notes.domain.model.Tag
 import com.er1cmo.noteassistant.notes.ui.R
 import com.er1cmo.noteassistant.notes.ui.components.NoteCard
 
@@ -72,6 +75,9 @@ fun NoteListRoute(
         onSettingsClick = onSettingsClick,
         onVoiceClick = {},
         onTodoCheckedChange = viewModel::toggleTodoDone,
+        onCreateTag = viewModel::createTag,
+        onRenameTag = viewModel::renameTag,
+        onDeleteTag = viewModel::deleteTag,
     )
 }
 
@@ -83,17 +89,12 @@ fun NoteListScreen(
     onSettingsClick: () -> Unit,
     onVoiceClick: () -> Unit,
     onTodoCheckedChange: (Long, Boolean) -> Unit,
+    onCreateTag: (String) -> Unit,
+    onRenameTag: (Long, String) -> Unit,
+    onDeleteTag: (Long) -> Unit,
 ) {
     var tagPanelOpen by remember { mutableStateOf(false) }
     var selectedFilter by remember { mutableStateOf(FILTER_ALL) }
-    val tagNames = remember(state.notes) {
-        state.notes
-            .flatMap { note -> note.tags.map { it.name } }
-            .map { it.trim() }
-            .filter { it.isNotEmpty() }
-            .distinct()
-            .sorted()
-    }
     val displayNotes = remember(state.notes, state.deletedNotes, selectedFilter) {
         when {
             selectedFilter == FILTER_DELETED -> state.deletedNotes
@@ -101,8 +102,8 @@ fun NoteListScreen(
             selectedFilter == FILTER_DONE -> state.notes.filter { it.type == NoteType.Todo && it.isDone }
             selectedFilter == FILTER_PINNED -> state.notes.filter { it.pinned }
             selectedFilter.startsWith(TAG_PREFIX) -> {
-                val tagName = selectedFilter.removePrefix(TAG_PREFIX)
-                state.notes.filter { note -> note.tags.any { it.name == tagName } }
+                val tagId = selectedFilter.removePrefix(TAG_PREFIX).toLongOrNull()
+                state.notes.filter { note -> note.tags.any { it.id == tagId } }
             }
             else -> state.notes
         }
@@ -193,11 +194,17 @@ fun NoteListScreen(
             ) {
                 TagDrawer(
                     selectedFilter = selectedFilter,
-                    tagNames = tagNames,
+                    tags = state.tags,
                     deletedCount = state.deletedNotes.size,
                     onFilterSelected = {
                         selectedFilter = it
                         tagPanelOpen = false
+                    },
+                    onCreateTag = onCreateTag,
+                    onRenameTag = onRenameTag,
+                    onDeleteTag = { tag ->
+                        if (selectedFilter == "$TAG_PREFIX${tag.id}") selectedFilter = FILTER_ALL
+                        onDeleteTag(tag.id)
                     },
                 )
             }
@@ -325,7 +332,7 @@ private fun FilterPill(text: String, selected: Boolean, onClick: () -> Unit) {
         onClick = onClick,
         shape = RoundedCornerShape(16.dp),
         color = if (selected) Color(0xFFEDE0FF) else Color.White,
-        border = androidx.compose.foundation.BorderStroke(1.dp, if (selected) Color.Transparent else Color(0xFF535864)),
+        border = BorderStroke(1.dp, if (selected) Color.Transparent else Color(0xFF535864)),
         tonalElevation = if (selected) 1.dp else 0.dp,
     ) {
         Text(
@@ -362,14 +369,21 @@ private fun EmptyNotes(selectedFilter: String, onCreateClick: () -> Unit) {
 @Composable
 private fun TagDrawer(
     selectedFilter: String,
-    tagNames: List<String>,
+    tags: List<Tag>,
     deletedCount: Int,
     onFilterSelected: (String) -> Unit,
+    onCreateTag: (String) -> Unit,
+    onRenameTag: (Long, String) -> Unit,
+    onDeleteTag: (Tag) -> Unit,
 ) {
+    var newTagName by remember { mutableStateOf("") }
+    var editingTagId by remember { mutableStateOf<Long?>(null) }
+    var editingTagName by remember { mutableStateOf("") }
+
     Surface(
         modifier = Modifier
             .fillMaxHeight()
-            .width(286.dp),
+            .width(306.dp),
         shape = RoundedCornerShape(topEnd = 28.dp, bottomEnd = 28.dp),
         color = Color(0xFFFFF3D1),
         tonalElevation = 10.dp,
@@ -380,7 +394,7 @@ private fun TagDrawer(
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Text("标签与筛选", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold, color = Color(0xFF3A2D16))
-            Text("选择范围后返回列表", style = MaterialTheme.typography.bodySmall, color = Color(0xFF8A7651))
+            Text("筛选、创建、重命名或删除标签", style = MaterialTheme.typography.bodySmall, color = Color(0xFF8A7651))
             Spacer(Modifier.height(8.dp))
             listOf(FILTER_ALL, FILTER_TODO, FILTER_DONE, FILTER_PINNED).forEach { item ->
                 TagDrawerRow(
@@ -396,19 +410,144 @@ private fun TagDrawer(
             )
             Spacer(Modifier.height(12.dp))
             Text("标签", style = MaterialTheme.typography.labelLarge, color = Color(0xFF8A7651))
-            if (tagNames.isEmpty()) {
-                Text("暂无标签，可在编辑页先填写。", style = MaterialTheme.typography.bodySmall, color = Color(0xFF9A8A70))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                DrawerTextField(
+                    value = newTagName,
+                    onValueChange = { newTagName = it },
+                    placeholder = "新建标签",
+                    modifier = Modifier.weight(1f),
+                )
+                DrawerSmallButton(text = "新建") {
+                    val value = newTagName.trim()
+                    if (value.isNotBlank()) {
+                        onCreateTag(value)
+                        newTagName = ""
+                    }
+                }
+            }
+            if (tags.isEmpty()) {
+                Text("暂无标签，可先在这里新建，也可在便签内填写。", style = MaterialTheme.typography.bodySmall, color = Color(0xFF9A8A70))
             } else {
-                tagNames.forEach { tag ->
-                    val filterValue = "$TAG_PREFIX$tag"
-                    TagDrawerRow(
-                        text = "# $tag",
-                        selected = selectedFilter == filterValue,
-                        onClick = { onFilterSelected(filterValue) },
-                    )
+                tags.forEach { tag ->
+                    val filterValue = "$TAG_PREFIX${tag.id}"
+                    if (editingTagId == tag.id) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                            DrawerTextField(
+                                value = editingTagName,
+                                onValueChange = { editingTagName = it },
+                                placeholder = "标签名",
+                                modifier = Modifier.weight(1f),
+                            )
+                            DrawerSmallButton(text = "保存") {
+                                val value = editingTagName.trim()
+                                if (value.isNotBlank()) {
+                                    onRenameTag(tag.id, value)
+                                    editingTagId = null
+                                    editingTagName = ""
+                                }
+                            }
+                            DrawerSmallButton(text = "取消") {
+                                editingTagId = null
+                                editingTagName = ""
+                            }
+                        }
+                    } else {
+                        TagManageRow(
+                            tag = tag,
+                            selected = selectedFilter == filterValue,
+                            onFilterClick = { onFilterSelected(filterValue) },
+                            onRenameClick = {
+                                editingTagId = tag.id
+                                editingTagName = tag.name
+                            },
+                            onDeleteClick = { onDeleteTag(tag) },
+                        )
+                    }
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun DrawerTextField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    placeholder: String,
+    modifier: Modifier = Modifier,
+) {
+    BasicTextField(
+        value = value,
+        onValueChange = onValueChange,
+        singleLine = true,
+        textStyle = MaterialTheme.typography.bodyMedium.copy(color = Color(0xFF3A2D16)),
+        modifier = modifier
+            .background(Color.White.copy(alpha = 0.78f), RoundedCornerShape(14.dp))
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        decorationBox = { innerTextField ->
+            if (value.isBlank()) {
+                Text(placeholder, color = Color(0x998A7651), style = MaterialTheme.typography.bodyMedium)
+            }
+            innerTextField()
+        },
+    )
+}
+
+@Composable
+private fun DrawerSmallButton(text: String, onClick: () -> Unit) {
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(14.dp),
+        color = Color(0xFFFFD978),
+    ) {
+        Text(
+            text = text,
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 9.dp),
+            style = MaterialTheme.typography.labelMedium,
+            color = Color(0xFF3A2A08),
+            maxLines = 1,
+        )
+    }
+}
+
+@Composable
+private fun TagManageRow(
+    tag: Tag,
+    selected: Boolean,
+    onFilterClick: () -> Unit,
+    onRenameClick: () -> Unit,
+    onDeleteClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(if (selected) Color(0xFFFFD978) else Color.Transparent, RoundedCornerShape(16.dp))
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text(
+            text = "# ${tag.name}",
+            modifier = Modifier
+                .weight(1f)
+                .clickable(onClick = onFilterClick),
+            color = if (selected) Color(0xFF3A2A08) else Color(0xFF4A3A20),
+            style = MaterialTheme.typography.bodyLarge,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Text(
+            text = "改名",
+            modifier = Modifier.clickable(onClick = onRenameClick),
+            color = Color(0xFF6B4B00),
+            style = MaterialTheme.typography.labelMedium,
+        )
+        Text(
+            text = "删除",
+            modifier = Modifier.clickable(onClick = onDeleteClick),
+            color = Color(0xFFB42318),
+            style = MaterialTheme.typography.labelMedium,
+        )
     }
 }
 

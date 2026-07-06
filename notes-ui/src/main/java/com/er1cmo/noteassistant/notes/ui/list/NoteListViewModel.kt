@@ -17,8 +17,14 @@ class NoteListViewModel @Inject constructor(
     val state = combine(
         noteUseCases.listNotes(),
         noteUseCases.listDeletedNotes(),
-    ) { notes, deletedNotes ->
-        NoteListState(notes = notes, deletedNotes = deletedNotes, isLoading = false)
+        noteUseCases.listTags(),
+    ) { notes, deletedNotes, tags ->
+        NoteListState(
+            notes = notes,
+            deletedNotes = deletedNotes,
+            tags = tags,
+            isLoading = false,
+        )
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5_000),
@@ -33,7 +39,25 @@ class NoteListViewModel @Inject constructor(
 
     fun toggleTodoDone(noteId: Long, done: Boolean) {
         viewModelScope.launch {
-            noteUseCases.toggleTodoDone(id = noteId, done = done)
+            noteUseCases.toggleTodoDone(noteId, done)
+        }
+    }
+
+    fun createTag(name: String) {
+        viewModelScope.launch {
+            noteUseCases.createTag(name)
+        }
+    }
+
+    fun renameTag(id: Long, name: String) {
+        viewModelScope.launch {
+            noteUseCases.renameTag(id, name)
+        }
+    }
+
+    fun deleteTag(id: Long) {
+        viewModelScope.launch {
+            noteUseCases.deleteTag(id)
         }
     }
 }
