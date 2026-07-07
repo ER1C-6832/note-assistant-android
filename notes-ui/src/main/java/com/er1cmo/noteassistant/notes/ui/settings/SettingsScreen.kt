@@ -36,6 +36,8 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.er1cmo.noteassistant.app.settings.SettingsRepository
+import com.er1cmo.noteassistant.assistant.runtime.controller.AssistantController
+import com.er1cmo.noteassistant.assistant.runtime.state.AssistantState
 import com.er1cmo.noteassistant.notes.domain.command.CommandResult
 import com.er1cmo.noteassistant.notes.domain.command.CommandSource
 import com.er1cmo.noteassistant.notes.domain.command.NoteCommandService
@@ -67,14 +69,14 @@ fun SettingsRoute(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text("小泓便签", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                    Text("设置与 Phase2 调试", style = MaterialTheme.typography.bodySmall, color = Color(0xFF697386))
+                    Text("设置与开发调试", style = MaterialTheme.typography.bodySmall, color = Color(0xFF697386))
                 }
-                StatusPill(text = "本地优先")
+                StatusPill(text = if (state.assistantState.assistantEnabled) "助手已启用" else "本地优先")
             }
-            SettingBox("WebSocket 地址", "Phase3 再接入真实小智服务")
-            SettingBox("语音助手状态", "Phase2 只做可信命令路径，不接麦克风 / WebSocket")
-            SettingBox("搜索模式", "手动搜索与命令搜索逐步收口到 SearchNotesUseCase")
+
+            SectionTitle("便签设置")
             SettingBox("数据库", "本地 SQLite note_assistant.db")
+            SettingBox("搜索模式", "手动搜索与命令搜索已逐步收口到 SearchNotesUseCase")
             ColorSettingBox(
                 label = "主界面背景",
                 selectedHex = state.homeBackgroundColor,
@@ -87,6 +89,22 @@ fun SettingsRoute(
                 options = tagDrawerBackgroundOptions,
                 onSelect = viewModel::setTagDrawerBackgroundColor,
             )
+
+            SectionTitle("Phase3 助手运行时")
+            AssistantRuntimeBox(
+                state = state,
+                onTextChange = viewModel::setAssistantTextInput,
+                onEnableClick = viewModel::enableAssistant,
+                onDisableClick = viewModel::disableAssistant,
+                onConnectClick = viewModel::connectAssistant,
+                onDisconnectClick = viewModel::disconnectAssistant,
+                onSendTextClick = viewModel::sendAssistantText,
+                onStartPttClick = viewModel::startFakePushToTalk,
+                onStopPttClick = viewModel::stopFakePushToTalk,
+                onBlockedToolClick = viewModel::simulateBlockedNoteTool,
+            )
+
+            SectionTitle("Phase2 命令与追溯调试")
             ToolSimulatorBox(
                 state = state,
                 onToolNameChange = viewModel::setToolName,
@@ -115,6 +133,7 @@ class SettingsViewModel @Inject constructor(
     private val settingsRepository: SettingsRepository,
     private val noteCommandService: NoteCommandService,
     private val commandTraceRepository: CommandTraceRepository,
+    private val assistantController: AssistantController,
 ) : ViewModel() {
     private val toolName = MutableStateFlow("notes.create")
     private val argumentsJson = MutableStateFlow("{\"title\":\"Phase2 模拟创建\",\"content\":\"从本地工具模拟器创建\",\"type\":\"normal\",\"tags\":[\"Phase2\"]}")
@@ -124,6 +143,8 @@ class SettingsViewModel @Inject constructor(
     private val revisionNoteId = MutableStateFlow("")
     private val revisionToRestoreId = MutableStateFlow("")
     private val revisionText = MutableStateFlow("输入 note_id 后点击刷新 revision。")
+    private val assistantTextInput = MutableStateFlow("你好，做一次 Phase3 文本对话测试")
+    private val assistantBusy = MutableStateFlow(false)
 
     private data class ThemeState(val home: String, val tagDrawer: String)
     private data class SimulatorState(
@@ -137,6 +158,15 @@ class SettingsViewModel @Inject constructor(
         val noteId: String,
         val revisionId: String,
         val text: String,
+    )
+    private data class AssistantPanelState(
+        val textInput: String,
+        val busy: Boolean,
+    )
+    private data class AssistantUiRuntimeState(
+        val runtime: AssistantState,
+        val textInput: String,
+        val busy: Boolean,
     )
 
     private val themeState = combine(
@@ -158,12 +188,21 @@ class SettingsViewModel @Inject constructor(
         RevisionState(noteId = noteId, revisionId = revisionId, text = text)
     }
 
+    private val assistantPanelState = combine(assistantTextInput, assistantBusy) { input, busy ->
+        AssistantPanelState(textInput = input, busy = busy)
+    }
+
+    private val assistantUiState = combine(assistantController.state, assistantPanelState) { runtime, panel ->
+        AssistantUiRuntimeState(runtime = runtime, textInput = panel.textInput, busy = panel.busy)
+    }
+
     val state = combine(
         themeState,
         simulatorState,
         revisionState,
+        assistantUiState,
         commandTraceRepository.observeRecentCommandLogs(20),
-    ) { theme, simulator, revision, logs ->
+    ) { theme, simulator, revision, assistant, logs ->
         SettingsUiState(
             homeBackgroundColor = theme.home,
             tagDrawerBackgroundColor = theme.tagDrawer,
@@ -175,6 +214,9 @@ class SettingsViewModel @Inject constructor(
             revisionNoteId = revision.noteId,
             revisionToRestoreId = revision.revisionId,
             revisionText = revision.text,
+            assistantState = assistant.runtime,
+            assistantTextInput = assistant.textInput,
+            assistantBusy = assistant.busy,
             recentLogs = logs,
         )
     }.stateIn(
@@ -205,6 +247,37 @@ class SettingsViewModel @Inject constructor(
 
     fun setRevisionToRestoreId(value: String) {
         revisionToRestoreId.value = value.filter { it.isDigit() }
+    }
+
+    fun setAssistantTextInput(value: String) {
+        assistantTextInput.value = value
+    }
+
+    fun enableAssistant() = runAssistantAction { assistantController.enableAssistant() }
+
+    fun disableAssistant() = runAssistantAction { assistantController.disableAssistant() }
+
+    fun connectAssistant() = runAssistantAction { assistantController.connect() }
+
+    fun disconnectAssistant() = runAssistantAction { assistantController.disconnect("settings_debug_close") }
+
+    fun sendAssistantText() = runAssistantAction { assistantController.sendText(assistantTextInput.value) }
+
+    fun startFakePushToTalk() = runAssistantAction { assistantController.startPushToTalk(hasRecordAudioPermission = true) }
+
+    fun stopFakePushToTalk() = runAssistantAction { assistantController.stopPushToTalk() }
+
+    fun simulateBlockedNoteTool() = runAssistantAction {
+        assistantController.simulateIncomingToolCall("notes.delete", "{\"note_id\":1}")
+    }
+
+    private fun runAssistantAction(block: suspend () -> Unit) {
+        if (assistantBusy.value) return
+        viewModelScope.launch {
+            assistantBusy.value = true
+            block()
+            assistantBusy.value = false
+        }
     }
 
     fun applySample(sample: ToolSample) {
@@ -370,6 +443,9 @@ data class SettingsUiState(
     val revisionNoteId: String = "",
     val revisionToRestoreId: String = "",
     val revisionText: String = "输入 note_id 后点击刷新 revision。",
+    val assistantState: AssistantState = AssistantState.disabled(),
+    val assistantTextInput: String = "你好，做一次 Phase3 文本对话测试",
+    val assistantBusy: Boolean = false,
     val recentLogs: List<AssistantCommandLog> = emptyList(),
 )
 
@@ -380,6 +456,116 @@ data class ToolSample(
     val toolName: String,
     val argumentsJson: String,
 )
+
+@Composable
+private fun SectionTitle(title: String) {
+    Text(
+        text = title,
+        color = Color(0xFF222832),
+        style = MaterialTheme.typography.titleSmall,
+        fontWeight = FontWeight.Bold,
+        modifier = Modifier.padding(top = 6.dp, start = 2.dp),
+    )
+}
+
+@Composable
+private fun AssistantRuntimeBox(
+    state: SettingsUiState,
+    onTextChange: (String) -> Unit,
+    onEnableClick: () -> Unit,
+    onDisableClick: () -> Unit,
+    onConnectClick: () -> Unit,
+    onDisconnectClick: () -> Unit,
+    onSendTextClick: () -> Unit,
+    onStartPttClick: () -> Unit,
+    onStopPttClick: () -> Unit,
+    onBlockedToolClick: () -> Unit,
+) {
+    val assistant = state.assistantState
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(Color.White.copy(alpha = 0.92f), RoundedCornerShape(18.dp))
+            .padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Gate A：Fake Runtime", color = Color(0xFF222832), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                Text("Phase3 当前只验证运行时状态、文本对话、PTT 生命周期和工具阻断，不改便签。", color = Color(0xFF697386), style = MaterialTheme.typography.bodySmall)
+            }
+            StatusPill(text = if (assistant.fakeRuntime) "Fake" else "Real")
+        }
+        RuntimeStateLine("phase", assistant.phase.storageValue)
+        RuntimeStateLine("connection", assistant.connection.storageValue)
+        RuntimeStateLine("activation", assistant.activation.storageValue)
+        RuntimeStateLine("audio", assistant.audio.storageValue)
+        RuntimeStateLine("session", assistant.sessionId ?: "暂无")
+        RuntimeStateLine("status", assistant.statusText)
+        assistant.errorMessage?.let { RuntimeStateLine("error", it) }
+        assistant.lastAssistantText?.let { RuntimeStateLine("assistant", it) }
+
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(
+                onClick = if (assistant.assistantEnabled) onDisableClick else onEnableClick,
+                enabled = !state.assistantBusy,
+                shape = RoundedCornerShape(14.dp),
+                modifier = Modifier.weight(1f),
+            ) { Text(if (assistant.assistantEnabled) "关闭助手" else "启用助手") }
+            Button(
+                onClick = if (assistant.isConnected) onDisconnectClick else onConnectClick,
+                enabled = !state.assistantBusy && assistant.assistantEnabled,
+                shape = RoundedCornerShape(14.dp),
+                modifier = Modifier.weight(1f),
+            ) { Text(if (assistant.isConnected) "断开" else "连接") }
+        }
+
+        OutlinedTextField(
+            value = state.assistantTextInput,
+            onValueChange = onTextChange,
+            label = { Text("文本对话测试") },
+            minLines = 2,
+            maxLines = 4,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Button(
+            onClick = onSendTextClick,
+            enabled = !state.assistantBusy && assistant.assistantEnabled,
+            shape = RoundedCornerShape(14.dp),
+            modifier = Modifier.fillMaxWidth(),
+        ) { Text(if (state.assistantBusy) "运行中……" else "发送文本到 Fake Runtime") }
+
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(
+                onClick = onStartPttClick,
+                enabled = !state.assistantBusy && assistant.assistantEnabled,
+                shape = RoundedCornerShape(14.dp),
+                modifier = Modifier.weight(1f),
+            ) { Text("开始 PTT") }
+            Button(
+                onClick = onStopPttClick,
+                enabled = !state.assistantBusy && assistant.assistantEnabled,
+                shape = RoundedCornerShape(14.dp),
+                modifier = Modifier.weight(1f),
+            ) { Text("结束 PTT") }
+        }
+        Button(
+            onClick = onBlockedToolClick,
+            enabled = !state.assistantBusy,
+            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6B7280)),
+            shape = RoundedCornerShape(14.dp),
+            modifier = Modifier.fillMaxWidth(),
+        ) { Text("模拟 notes.delete 工具调用并阻断") }
+    }
+}
+
+@Composable
+private fun RuntimeStateLine(label: String, value: String) {
+    Row(verticalAlignment = Alignment.Top) {
+        Text(label, color = Color(0xFF9AA3B2), style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(0.32f))
+        Text(value, color = Color(0xFF344054), style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(0.68f))
+    }
+}
 
 @Composable
 private fun ToolSimulatorBox(
