@@ -7,7 +7,6 @@ data class NoteUseCases @Inject constructor(
     val listDeletedNotes: ListDeletedNotesUseCase,
     val listArchivedNotes: ListArchivedNotesUseCase,
     val listTags: ListTagsUseCase,
-    val searchNotes: SearchNotesUseCase,
     val observeNote: ObserveNoteUseCase,
     val getNote: GetNoteUseCase,
     val createNote: CreateNoteUseCase,
@@ -21,5 +20,6 @@ data class NoteUseCases @Inject constructor(
     val createTag: CreateTagUseCase,
     val renameTag: RenameTagUseCase,
     val deleteTag: DeleteTagUseCase,
+    val searchNotes: SearchNotesUseCase,
     val seedDemoNotes: SeedDemoNotesUseCase,
 )
