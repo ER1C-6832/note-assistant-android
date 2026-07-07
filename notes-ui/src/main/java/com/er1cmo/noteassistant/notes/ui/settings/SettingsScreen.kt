@@ -40,7 +40,6 @@ import com.er1cmo.noteassistant.notes.domain.command.CommandResult
 import com.er1cmo.noteassistant.notes.domain.command.CommandSource
 import com.er1cmo.noteassistant.notes.domain.command.NoteCommandService
 import com.er1cmo.noteassistant.notes.domain.model.AssistantCommandLog
-import com.er1cmo.noteassistant.notes.domain.model.NoteRevision
 import com.er1cmo.noteassistant.notes.domain.repository.CommandTraceRepository
 import com.er1cmo.noteassistant.notes.ui.components.StatusPill
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -265,9 +264,9 @@ class SettingsViewModel @Inject constructor(
             return
         }
         viewModelScope.launch {
-            val revisions = commandTraceRepository.listRevisionsForNote(noteId)
+            val revisions: List<*> = commandTraceRepository.listRevisionsForNote(noteId)
             revisionText.value = revisions.toRevisionDebugText(noteId)
-            revisionToRestoreId.value = revisions.firstOrNull()?.id?.toString().orEmpty()
+            revisionToRestoreId.value = revisions.firstOrNull()?.debugLong("id")?.toString().orEmpty()
         }
     }
 
@@ -297,19 +296,66 @@ class SettingsViewModel @Inject constructor(
         resultJson?.let { appendLine("result_json=$it") }
     }
 
-    private fun List<NoteRevision>.toRevisionDebugText(noteId: Long): String = buildString {
+    private fun List<*>.toRevisionDebugText(noteId: Long): String = buildString {
         if (isEmpty()) {
             append("note_id=$noteId 暂无 revision。先用 append / update_title / replace_content / delete 等命令产生 revision。")
             return@buildString
         }
         appendLine("note_id=$noteId revision_count=$size")
         take(8).forEach { revision ->
-            appendLine("#${revision.id} reason=${revision.reason ?: "-"} source=${revision.source.storageValue} command_log_id=${revision.commandLogId ?: "-"}")
-            appendLine("  title=${revision.titleSnapshot.ifBlank { "未命名便签" }}")
-            appendLine("  content=${revision.contentSnapshot.take(48).ifBlank { "<empty>" }}")
-            appendLine("  tags=${revision.tagsSnapshotJson}")
-            appendLine("  state type=${revision.typeSnapshot.name} done=${revision.isDoneSnapshot} pinned=${revision.pinnedSnapshot} archived=${revision.archivedSnapshot} deleted=${revision.deletedSnapshot}")
+            appendLine(
+                "#${revision.debugText("id")} " +
+                    "reason=${revision.debugText("reason")} " +
+                    "source=${revision.debugValue("source").debugStorageValue()} " +
+                    "command_log_id=${revision.debugText("commandLogId")}",
+            )
+            appendLine("  title=${revision.debugText("titleSnapshot", "未命名便签")}")
+            appendLine("  content=${revision.debugText("contentSnapshot", "<empty>").take(48)}")
+            appendLine("  tags=${revision.debugText("tagsSnapshotJson")}")
+            appendLine(
+                "  state type=${revision.debugText("typeSnapshot")} " +
+                    "done=${revision.debugText("isDoneSnapshot")} " +
+                    "pinned=${revision.debugText("pinnedSnapshot")} " +
+                    "archived=${revision.debugText("archivedSnapshot")} " +
+                    "deleted=${revision.debugText("deletedSnapshot")}",
+            )
         }
+    }
+
+    private fun Any?.debugLong(name: String): Long? = debugValue(name)?.toString()?.toLongOrNull()
+
+    private fun Any?.debugText(name: String, fallback: String = "-"): String {
+        val text = debugValue(name)?.toString()?.trim().orEmpty()
+        return text.ifBlank { fallback }
+    }
+
+    private fun Any?.debugStorageValue(): String {
+        val target = this ?: return "-"
+        val value = target.debugValue("storageValue")?.toString()?.trim().orEmpty()
+        return value.ifBlank { target.toString() }
+    }
+
+    private fun Any?.debugValue(name: String): Any? {
+        val target = this ?: return null
+        if (name.isBlank()) return null
+        val capitalized = name.substring(0, 1).uppercase() + name.substring(1)
+        val candidates = buildList {
+            if (name.startsWith("is")) add(name)
+            add("get$capitalized")
+            add(name)
+        }
+        return runCatching {
+            val method = target.javaClass.methods.firstOrNull { method ->
+                method.parameterCount == 0 && candidates.contains(method.name)
+            }
+            if (method != null) {
+                method.invoke(target)
+            } else {
+                val field = target.javaClass.declaredFields.firstOrNull { it.name == name } ?: return@runCatching null
+                field.isAccessible = true
+                field.get(target)
+            }
+        }.getOrNull()
     }
 }
 
