@@ -3,7 +3,6 @@ package com.er1cmo.noteassistant.notes.ui.settings
 import android.graphics.Color as AndroidColor
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -20,6 +19,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -93,6 +93,8 @@ fun SettingsRoute(
                 onArgumentsChange = viewModel::setArgumentsJson,
                 onSampleClick = viewModel::applySample,
                 onExecuteClick = viewModel::executeTool,
+                onConfirmClick = viewModel::confirmPending,
+                onRejectClick = viewModel::rejectPending,
             )
             CommandLogBox(logs = state.recentLogs)
             Button(onClick = onBackClick, shape = RoundedCornerShape(16.dp)) { Text("返回") }
@@ -111,17 +113,30 @@ class SettingsViewModel @Inject constructor(
     private val argumentsJson = MutableStateFlow("{\"title\":\"Phase2 模拟创建\",\"content\":\"从本地工具模拟器创建\",\"type\":\"normal\",\"tags\":[\"Phase2\"]}")
     private val isRunning = MutableStateFlow(false)
     private val resultText = MutableStateFlow("尚未执行命令")
+    private val pendingConfirmationId = MutableStateFlow<String?>(null)
 
     private data class ThemeState(val home: String, val tagDrawer: String)
-    private data class SimulatorState(val toolName: String, val argumentsJson: String, val isRunning: Boolean, val resultText: String)
+    private data class SimulatorState(
+        val toolName: String,
+        val argumentsJson: String,
+        val isRunning: Boolean,
+        val resultText: String,
+        val pendingConfirmationId: String?,
+    )
 
     private val themeState = combine(
         settingsRepository.homeBackgroundColor,
         settingsRepository.tagDrawerBackgroundColor,
     ) { home, tagDrawer -> ThemeState(home = home, tagDrawer = tagDrawer) }
 
-    private val simulatorState = combine(toolName, argumentsJson, isRunning, resultText) { tool, args, running, result ->
-        SimulatorState(toolName = tool, argumentsJson = args, isRunning = running, resultText = result)
+    private val simulatorState = combine(toolName, argumentsJson, isRunning, resultText, pendingConfirmationId) { tool, args, running, result, confirmationId ->
+        SimulatorState(
+            toolName = tool,
+            argumentsJson = args,
+            isRunning = running,
+            resultText = result,
+            pendingConfirmationId = confirmationId,
+        )
     }
 
     val state = combine(
@@ -136,6 +151,7 @@ class SettingsViewModel @Inject constructor(
             argumentsJson = simulator.argumentsJson,
             isRunning = simulator.isRunning,
             resultText = simulator.resultText,
+            pendingConfirmationId = simulator.pendingConfirmationId,
             recentLogs = logs,
         )
     }.stateIn(
@@ -163,6 +179,7 @@ class SettingsViewModel @Inject constructor(
     fun applySample(sample: ToolSample) {
         toolName.value = sample.toolName
         argumentsJson.value = sample.argumentsJson
+        pendingConfirmationId.value = null
         resultText.value = "已套用样例：${sample.label}"
     }
 
@@ -170,12 +187,40 @@ class SettingsViewModel @Inject constructor(
         if (isRunning.value) return
         viewModelScope.launch {
             isRunning.value = true
+            pendingConfirmationId.value = null
             resultText.value = "执行中……"
             val result = noteCommandService.execute(
                 toolName = toolName.value.trim(),
                 argumentsJson = argumentsJson.value,
                 source = CommandSource.LocalToolSimulator,
             )
+            pendingConfirmationId.value = result.confirmationId
+            resultText.value = result.toDebugText()
+            isRunning.value = false
+        }
+    }
+
+    fun confirmPending() {
+        val confirmationId = pendingConfirmationId.value ?: return
+        if (isRunning.value) return
+        viewModelScope.launch {
+            isRunning.value = true
+            resultText.value = "确认执行中……\nconfirmation_id=$confirmationId"
+            val result = noteCommandService.confirmPendingCommand(confirmationId)
+            pendingConfirmationId.value = result.confirmationId
+            resultText.value = result.toDebugText()
+            isRunning.value = false
+        }
+    }
+
+    fun rejectPending() {
+        val confirmationId = pendingConfirmationId.value ?: return
+        if (isRunning.value) return
+        viewModelScope.launch {
+            isRunning.value = true
+            resultText.value = "拒绝执行中……\nconfirmation_id=$confirmationId"
+            val result = noteCommandService.rejectPendingCommand(confirmationId)
+            pendingConfirmationId.value = null
             resultText.value = result.toDebugText()
             isRunning.value = false
         }
@@ -202,6 +247,7 @@ data class SettingsUiState(
     val argumentsJson: String = "{}",
     val isRunning: Boolean = false,
     val resultText: String = "尚未执行命令",
+    val pendingConfirmationId: String? = null,
     val recentLogs: List<AssistantCommandLog> = emptyList(),
 )
 
@@ -220,6 +266,8 @@ private fun ToolSimulatorBox(
     onArgumentsChange: (String) -> Unit,
     onSampleClick: (ToolSample) -> Unit,
     onExecuteClick: () -> Unit,
+    onConfirmClick: () -> Unit,
+    onRejectClick: () -> Unit,
 ) {
     Column(
         modifier = Modifier
@@ -229,7 +277,11 @@ private fun ToolSimulatorBox(
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Text("Phase2 本地工具模拟器", color = Color(0xFF222832), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-        Text("当前支持 notes.create / search / list_recent / append / update_title / toggle_done / pin / archive。", color = Color(0xFF697386), style = MaterialTheme.typography.bodySmall)
+        Text(
+            "支持中低风险直接执行；notes.delete / notes.replace_content / tags.delete / tags.bind replace 会先返回 requires_confirmation。",
+            color = Color(0xFF697386),
+            style = MaterialTheme.typography.bodySmall,
+        )
         Row(
             modifier = Modifier.horizontalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -267,6 +319,34 @@ private fun ToolSimulatorBox(
             modifier = Modifier.fillMaxWidth(),
         ) {
             Text(if (state.isRunning) "执行中……" else "执行 tools/call")
+        }
+        state.pendingConfirmationId?.let { confirmationId ->
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(Color(0xFFFFF7ED), RoundedCornerShape(16.dp))
+                    .padding(10.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text("待确认操作", fontWeight = FontWeight.SemiBold, color = Color(0xFF9A3412))
+                Text("confirmation_id=$confirmationId", color = Color(0xFF9A3412), style = MaterialTheme.typography.bodySmall)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = onConfirmClick,
+                        enabled = !state.isRunning,
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626)),
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier.weight(1f),
+                    ) { Text("确认执行") }
+                    Button(
+                        onClick = onRejectClick,
+                        enabled = !state.isRunning,
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6B7280)),
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier.weight(1f),
+                    ) { Text("拒绝") }
+                }
+            }
         }
         Text("执行结果", color = Color(0xFF9AA3B2), style = MaterialTheme.typography.bodySmall)
         Text(
@@ -309,6 +389,7 @@ private fun CommandLogBox(logs: List<AssistantCommandLog>) {
                     Text("risk=${log.riskLevel.storageValue} · confirmation=${log.confirmationStatus.storageValue}", color = Color(0xFF697386), style = MaterialTheme.typography.bodySmall)
                     log.errorMessage?.let { Text(it, color = Color(0xFFB42318), style = MaterialTheme.typography.bodySmall) }
                     log.affectedNoteIdsJson?.let { Text("notes=$it", color = Color(0xFF697386), style = MaterialTheme.typography.bodySmall) }
+                    log.affectedTagIdsJson?.let { Text("tags=$it", color = Color(0xFF697386), style = MaterialTheme.typography.bodySmall) }
                 }
             }
         }
@@ -398,9 +479,14 @@ private val toolSamples = listOf(
     ToolSample("最近", "notes.list_recent", "{\"limit\":5,\"include_archived\":true}"),
     ToolSample("追加", "notes.append", "{\"note_id\":1,\"content\":\"模拟追加一行内容\"}"),
     ToolSample("改标题", "notes.update_title", "{\"note_id\":1,\"title\":\"通过命令改标题\"}"),
+    ToolSample("覆盖正文", "notes.replace_content", "{\"note_id\":1,\"content\":\"这是一段确认后才会覆盖的新正文\"}"),
     ToolSample("完成", "notes.toggle_done", "{\"note_id\":1,\"done\":true}"),
     ToolSample("置顶", "notes.pin", "{\"note_id\":1,\"pinned\":true}"),
     ToolSample("归档", "notes.archive", "{\"note_id\":1,\"archived\":true}"),
+    ToolSample("删除", "notes.delete", "{\"note_id\":1}"),
+    ToolSample("加标签", "tags.bind", "{\"note_id\":1,\"tags\":[\"客户\",\"Phase2\"],\"mode\":\"add\"}"),
+    ToolSample("替换标签", "tags.bind", "{\"note_id\":1,\"tags\":[\"替换后\"],\"mode\":\"replace\"}"),
+    ToolSample("删除标签", "tags.delete", "{\"tag_id\":1}"),
 )
 
 private fun colorFromHex(hex: String): Color = runCatching { Color(AndroidColor.parseColor(hex)) }.getOrDefault(Color.White)

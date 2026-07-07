@@ -6,6 +6,7 @@ import com.er1cmo.noteassistant.notes.domain.model.Note
 import com.er1cmo.noteassistant.notes.domain.model.NoteRevision
 import com.er1cmo.noteassistant.notes.domain.model.NoteType
 import com.er1cmo.noteassistant.notes.domain.model.PendingConfirmation
+import com.er1cmo.noteassistant.notes.domain.model.Tag
 import com.er1cmo.noteassistant.notes.domain.repository.CommandTraceRepository
 import com.er1cmo.noteassistant.notes.domain.usecase.NoteUseCases
 import kotlinx.coroutines.flow.first
@@ -25,6 +26,7 @@ class NoteCommandService @Inject constructor(
         argumentsJson: String,
         source: CommandSource = CommandSource.LocalToolSimulator,
     ): CommandResult {
+        commandTraceRepository.markExpiredPendingConfirmations(timeProvider.nowMillis())
         val tool = ToolName.fromStorage(toolName)
         val arguments = parseArguments(argumentsJson).getOrElse { error ->
             return writeFailedLog(
@@ -44,9 +46,13 @@ class NoteCommandService @Inject constructor(
                 ToolName.NotesListRecent -> listRecent(arguments, argumentsJson, source)
                 ToolName.NotesAppend -> appendNote(arguments, argumentsJson, source)
                 ToolName.NotesUpdateTitle -> updateTitle(arguments, argumentsJson, source)
+                ToolName.NotesReplaceContent -> replaceContent(arguments, argumentsJson, source, existingLogId = null, fromConfirmation = false)
                 ToolName.NotesToggleDone -> toggleDone(arguments, argumentsJson, source)
                 ToolName.NotesPin -> setPinned(arguments, argumentsJson, source)
                 ToolName.NotesArchive -> setArchived(arguments, argumentsJson, source)
+                ToolName.NotesDelete -> deleteNotes(arguments, argumentsJson, source, existingLogId = null, fromConfirmation = false)
+                ToolName.TagsBind -> bindTags(arguments, argumentsJson, source, existingLogId = null, fromConfirmation = false)
+                ToolName.TagsDelete -> deleteTag(arguments, argumentsJson, source, existingLogId = null, fromConfirmation = false)
                 else -> unsupported(tool, argumentsJson, source)
             }
         }.getOrElse { error ->
@@ -59,6 +65,111 @@ class NoteCommandService @Inject constructor(
                 errorCode = CommandErrorCode.StorageError,
             )
         }
+    }
+
+    suspend fun confirmPendingCommand(confirmationId: String): CommandResult {
+        commandTraceRepository.markExpiredPendingConfirmations(timeProvider.nowMillis())
+        val pending = commandTraceRepository.getPendingConfirmation(confirmationId)
+            ?: return CommandResult.failure(
+                message = "没有找到待确认操作",
+                riskLevel = RiskLevel.High,
+                errorCode = CommandErrorCode.NotFound,
+            )
+        if (pending.status != ConfirmationStatus.Pending) {
+            return CommandResult.failure(
+                message = "待确认操作当前状态为 ${pending.status.storageValue}，不能再次确认",
+                riskLevel = RiskLevel.High,
+                commandLogId = pending.commandLogId,
+                errorCode = when (pending.status) {
+                    ConfirmationStatus.Expired -> CommandErrorCode.ConfirmationExpired
+                    ConfirmationStatus.Rejected -> CommandErrorCode.ConfirmationRejected
+                    else -> CommandErrorCode.Conflict
+                },
+            )
+        }
+        val now = timeProvider.nowMillis()
+        if (pending.expiresAt <= now) {
+            val expired = pending.copy(status = ConfirmationStatus.Expired)
+            commandTraceRepository.updatePendingConfirmation(expired)
+            finishLog(
+                logId = pending.commandLogId,
+                status = CommandStatus.Blocked,
+                errorCode = CommandErrorCode.ConfirmationExpired,
+                errorMessage = "确认已过期，请重新发起命令",
+                confirmationStatus = ConfirmationStatus.Expired,
+            )
+            return CommandResult.failure(
+                message = "确认已过期，请重新发起命令",
+                riskLevel = RiskLevel.High,
+                commandLogId = pending.commandLogId,
+                errorCode = CommandErrorCode.ConfirmationExpired,
+            )
+        }
+
+        val args = parseArguments(pending.argumentsJson).getOrElse {
+            finishLog(
+                logId = pending.commandLogId,
+                status = CommandStatus.Failed,
+                errorCode = CommandErrorCode.InvalidJson,
+                errorMessage = "待确认参数不是有效 JSON",
+                confirmationStatus = ConfirmationStatus.Confirmed,
+            )
+            commandTraceRepository.updatePendingConfirmation(pending.copy(status = ConfirmationStatus.Confirmed))
+            return CommandResult.failure(
+                message = "待确认参数不是有效 JSON",
+                riskLevel = RiskLevel.High,
+                commandLogId = pending.commandLogId,
+                errorCode = CommandErrorCode.InvalidJson,
+            )
+        }
+
+        commandTraceRepository.updatePendingConfirmation(pending.copy(status = ConfirmationStatus.Confirmed))
+        return when (pending.toolName) {
+            ToolName.NotesReplaceContent -> replaceContent(args, pending.argumentsJson, pending.source, pending.commandLogId, fromConfirmation = true, pendingPreviewJson = pending.previewJson)
+            ToolName.NotesDelete -> deleteNotes(args, pending.argumentsJson, pending.source, pending.commandLogId, fromConfirmation = true)
+            ToolName.TagsBind -> bindTags(args, pending.argumentsJson, pending.source, pending.commandLogId, fromConfirmation = true)
+            ToolName.TagsDelete -> deleteTag(args, pending.argumentsJson, pending.source, pending.commandLogId, fromConfirmation = true, pendingPreviewJson = pending.previewJson)
+            ToolName.NotesPin -> setPinned(args.put("confirmed", true), pending.argumentsJson, pending.source, pending.commandLogId, fromConfirmation = true)
+            ToolName.NotesArchive -> setArchived(args.put("confirmed", true), pending.argumentsJson, pending.source, pending.commandLogId, fromConfirmation = true)
+            else -> {
+                finishLog(
+                    logId = pending.commandLogId,
+                    status = CommandStatus.Failed,
+                    errorCode = CommandErrorCode.UnsupportedTool,
+                    errorMessage = "这个待确认工具暂不支持确认执行：${pending.toolName.storageValue}",
+                    confirmationStatus = ConfirmationStatus.Confirmed,
+                )
+                CommandResult.failure(
+                    message = "这个待确认工具暂不支持确认执行：${pending.toolName.storageValue}",
+                    riskLevel = RiskLevel.High,
+                    commandLogId = pending.commandLogId,
+                    errorCode = CommandErrorCode.UnsupportedTool,
+                )
+            }
+        }
+    }
+
+    suspend fun rejectPendingCommand(confirmationId: String): CommandResult {
+        val pending = commandTraceRepository.getPendingConfirmation(confirmationId)
+            ?: return CommandResult.failure(
+                message = "没有找到待确认操作",
+                riskLevel = RiskLevel.High,
+                errorCode = CommandErrorCode.NotFound,
+            )
+        commandTraceRepository.updatePendingConfirmation(pending.copy(status = ConfirmationStatus.Rejected))
+        finishLog(
+            logId = pending.commandLogId,
+            status = CommandStatus.Failed,
+            errorCode = CommandErrorCode.ConfirmationRejected,
+            errorMessage = "用户已拒绝执行",
+            confirmationStatus = ConfirmationStatus.Rejected,
+        )
+        return CommandResult.failure(
+            message = "已拒绝执行，未修改任何便签",
+            riskLevel = RiskLevel.High,
+            commandLogId = pending.commandLogId,
+            errorCode = CommandErrorCode.ConfirmationRejected,
+        )
     }
 
     private suspend fun createNote(args: JSONObject, rawJson: String, source: CommandSource): CommandResult {
@@ -158,7 +269,7 @@ class NoteCommandService @Inject constructor(
         val logId = insertInitialLog(ToolName.NotesAppend, rawJson, source, risk)
         insertRevisionSnapshots(logId, source, "append_content", listOf(note))
         val nextContent = if (note.content.isBlank()) appendContent else note.content.trimEnd() + "\n" + appendContent
-        noteUseCases.updateNote(note.id, note.title, nextContent, note.type, note.color, note.tags.joinToString("、") { it.name })
+        noteUseCases.updateNote(note.id, note.title, nextContent, note.type, note.color, note.tags.toTagText())
         val resultJson = JSONObject().put("note_id", note.id).put("content_length", nextContent.length).toString()
         finishLog(logId = logId, status = CommandStatus.Success, resultJson = resultJson, affectedNoteIds = listOf(note.id))
         return CommandResult.success("已追加内容", risk, logId, affectedNoteIds = listOf(note.id), resultJson = resultJson)
@@ -173,10 +284,65 @@ class NoteCommandService @Inject constructor(
         val risk = riskPolicy.classify(CommandRiskInput(toolName = ToolName.NotesUpdateTitle, source = source, affectedNoteCount = 1))
         val logId = insertInitialLog(ToolName.NotesUpdateTitle, rawJson, source, risk)
         insertRevisionSnapshots(logId, source, "update_title", listOf(note))
-        noteUseCases.updateNote(note.id, title, note.content, note.type, note.color, note.tags.joinToString("、") { it.name })
+        noteUseCases.updateNote(note.id, title, note.content, note.type, note.color, note.tags.toTagText())
         val resultJson = JSONObject().put("note_id", note.id).put("title", title).toString()
         finishLog(logId = logId, status = CommandStatus.Success, resultJson = resultJson, affectedNoteIds = listOf(note.id))
         return CommandResult.success("已更新标题", risk, logId, affectedNoteIds = listOf(note.id), resultJson = resultJson)
+    }
+
+    private suspend fun replaceContent(
+        args: JSONObject,
+        rawJson: String,
+        source: CommandSource,
+        existingLogId: Long?,
+        fromConfirmation: Boolean,
+        pendingPreviewJson: String? = null,
+    ): CommandResult {
+        val noteId = args.optLong("note_id", 0L)
+        val newContent = args.optString("content", "")
+        if (noteId <= 0) return validationFailed(ToolName.NotesReplaceContent, rawJson, source, "缺少 note_id")
+        val note = noteUseCases.getNote(noteId) ?: return notFound(ToolName.NotesReplaceContent, rawJson, source, noteId)
+        if (note.deleted) return validationFailed(ToolName.NotesReplaceContent, rawJson, source, "最近删除中的便签不能覆盖正文")
+        val risk = riskPolicy.classify(CommandRiskInput(toolName = ToolName.NotesReplaceContent, source = source, affectedNoteCount = 1))
+        val confirmed = args.optBoolean("confirmed", false) || fromConfirmation
+        if (!confirmed) {
+            val previewJson = JSONObject()
+                .put("summary", "将覆盖便签正文，需要确认")
+                .put("note_id", note.id)
+                .put("title", note.title)
+                .put("old_content_preview", note.content.take(80))
+                .put("new_content_preview", newContent.take(80))
+                .put("expected_updated_at", note.updatedAt)
+                .put("affected_note_ids", listOf(note.id).toJsonArray())
+                .toString()
+            return createPendingConfirmation(ToolName.NotesReplaceContent, rawJson, source, risk, previewJson, listOf(note.id), emptyList(), "将覆盖《${note.title.ifBlank { "未命名便签" }}》正文，是否确认？")
+        }
+        if (fromConfirmation && pendingPreviewJson != null) {
+            val expectedUpdatedAt = runCatching { JSONObject(pendingPreviewJson).optLong("expected_updated_at", note.updatedAt) }.getOrDefault(note.updatedAt)
+            if (expectedUpdatedAt != note.updatedAt) {
+                existingLogId?.let {
+                    finishLog(
+                        logId = it,
+                        status = CommandStatus.Blocked,
+                        errorCode = CommandErrorCode.Conflict,
+                        errorMessage = "便签在确认前已发生变化，请重新发起命令",
+                        confirmationStatus = ConfirmationStatus.Confirmed,
+                    )
+                }
+                return CommandResult.failure(
+                    message = "便签在确认前已发生变化，请重新发起命令",
+                    riskLevel = RiskLevel.High,
+                    commandLogId = existingLogId,
+                    errorCode = CommandErrorCode.Conflict,
+                )
+            }
+        }
+        val logId = existingLogId ?: insertInitialLog(ToolName.NotesReplaceContent, rawJson, source, risk)
+        insertRevisionSnapshots(logId, source, "replace_content", listOf(note))
+        noteUseCases.updateNote(note.id, note.title, newContent, note.type, note.color, note.tags.toTagText())
+        val resultJson = JSONObject().put("note_id", note.id).put("content_length", newContent.length).toString()
+        finishLog(logId = logId, status = CommandStatus.Success, resultJson = resultJson, affectedNoteIds = listOf(note.id), confirmationStatus = if (fromConfirmation) ConfirmationStatus.Confirmed else ConfirmationStatus.NotRequired)
+        return CommandResult.success("已覆盖正文", risk, logId, affectedNoteIds = listOf(note.id), resultJson = resultJson)
     }
 
     private suspend fun toggleDone(args: JSONObject, rawJson: String, source: CommandSource): CommandResult {
@@ -195,38 +361,224 @@ class NoteCommandService @Inject constructor(
         return CommandResult.success(if (done) "已标记完成" else "已取消完成", risk, logId, affectedNoteIds = listOf(note.id), resultJson = resultJson)
     }
 
-    private suspend fun setPinned(args: JSONObject, rawJson: String, source: CommandSource): CommandResult {
+    private suspend fun setPinned(
+        args: JSONObject,
+        rawJson: String,
+        source: CommandSource,
+        existingLogId: Long? = null,
+        fromConfirmation: Boolean = false,
+    ): CommandResult {
         val noteIds = args.noteIds()
         if (noteIds.isEmpty()) return validationFailed(ToolName.NotesPin, rawJson, source, "缺少 note_id 或 note_ids")
         val pinned = args.optBoolean("pinned", true)
         val riskInput = CommandRiskInput(toolName = ToolName.NotesPin, source = source, affectedNoteCount = noteIds.size)
         val risk = riskPolicy.classify(riskInput)
-        if (riskPolicy.requiresConfirmation(riskInput)) return createPendingConfirmation(ToolName.NotesPin, rawJson, source, risk, noteIds, emptyList(), "将批量修改 ${noteIds.size} 条便签的置顶状态")
+        if (!fromConfirmation && riskPolicy.requiresConfirmation(riskInput)) {
+            val previewJson = JSONObject()
+                .put("summary", "将批量修改 ${noteIds.size} 条便签的置顶状态")
+                .put("pinned", pinned)
+                .put("affected_note_ids", noteIds.toJsonArray())
+                .toString()
+            return createPendingConfirmation(ToolName.NotesPin, rawJson, source, risk, previewJson, noteIds, emptyList(), "将批量修改 ${noteIds.size} 条便签的置顶状态")
+        }
         val notes = noteIds.mapNotNull { noteUseCases.getNote(it) }.filter { !it.deleted }
-        val logId = insertInitialLog(ToolName.NotesPin, rawJson, source, risk)
+        val logId = existingLogId ?: insertInitialLog(ToolName.NotesPin, rawJson, source, risk)
         if (notes.size > 1) insertRevisionSnapshots(logId, source, "pin_batch", notes)
         notes.forEach { noteUseCases.setNotePinned(it.id, pinned) }
         val affectedIds = notes.map { it.id }
         val resultJson = JSONObject().put("pinned", pinned).put("affected_note_ids", affectedIds.toJsonArray()).toString()
-        finishLog(logId = logId, status = CommandStatus.Success, resultJson = resultJson, affectedNoteIds = affectedIds)
+        finishLog(logId = logId, status = CommandStatus.Success, resultJson = resultJson, affectedNoteIds = affectedIds, confirmationStatus = if (fromConfirmation) ConfirmationStatus.Confirmed else ConfirmationStatus.NotRequired)
         return CommandResult.success(if (pinned) "已置顶 ${affectedIds.size} 条便签" else "已取消置顶 ${affectedIds.size} 条便签", risk, logId, affectedNoteIds = affectedIds, resultJson = resultJson)
     }
 
-    private suspend fun setArchived(args: JSONObject, rawJson: String, source: CommandSource): CommandResult {
+    private suspend fun setArchived(
+        args: JSONObject,
+        rawJson: String,
+        source: CommandSource,
+        existingLogId: Long? = null,
+        fromConfirmation: Boolean = false,
+    ): CommandResult {
         val noteIds = args.noteIds()
         if (noteIds.isEmpty()) return validationFailed(ToolName.NotesArchive, rawJson, source, "缺少 note_id 或 note_ids")
         val archived = args.optBoolean("archived", true)
         val riskInput = CommandRiskInput(toolName = ToolName.NotesArchive, source = source, affectedNoteCount = noteIds.size)
         val risk = riskPolicy.classify(riskInput)
-        if (riskPolicy.requiresConfirmation(riskInput)) return createPendingConfirmation(ToolName.NotesArchive, rawJson, source, risk, noteIds, emptyList(), "将批量修改 ${noteIds.size} 条便签的归档状态")
+        if (!fromConfirmation && riskPolicy.requiresConfirmation(riskInput)) {
+            val previewJson = JSONObject()
+                .put("summary", "将批量修改 ${noteIds.size} 条便签的归档状态")
+                .put("archived", archived)
+                .put("affected_note_ids", noteIds.toJsonArray())
+                .toString()
+            return createPendingConfirmation(ToolName.NotesArchive, rawJson, source, risk, previewJson, noteIds, emptyList(), "将批量修改 ${noteIds.size} 条便签的归档状态")
+        }
         val notes = noteIds.mapNotNull { noteUseCases.getNote(it) }.filter { !it.deleted }
-        val logId = insertInitialLog(ToolName.NotesArchive, rawJson, source, risk)
+        val logId = existingLogId ?: insertInitialLog(ToolName.NotesArchive, rawJson, source, risk)
         insertRevisionSnapshots(logId, source, if (archived) "archive" else "unarchive", notes)
         notes.forEach { noteUseCases.setNoteArchived(it.id, archived) }
         val affectedIds = notes.map { it.id }
         val resultJson = JSONObject().put("archived", archived).put("affected_note_ids", affectedIds.toJsonArray()).toString()
-        finishLog(logId = logId, status = CommandStatus.Success, resultJson = resultJson, affectedNoteIds = affectedIds)
+        finishLog(logId = logId, status = CommandStatus.Success, resultJson = resultJson, affectedNoteIds = affectedIds, confirmationStatus = if (fromConfirmation) ConfirmationStatus.Confirmed else ConfirmationStatus.NotRequired)
         return CommandResult.success(if (archived) "已归档 ${affectedIds.size} 条便签" else "已取消归档 ${affectedIds.size} 条便签", risk, logId, affectedNoteIds = affectedIds, resultJson = resultJson)
+    }
+
+    private suspend fun deleteNotes(
+        args: JSONObject,
+        rawJson: String,
+        source: CommandSource,
+        existingLogId: Long?,
+        fromConfirmation: Boolean,
+    ): CommandResult {
+        val noteIds = args.noteIds()
+        if (noteIds.isEmpty()) return validationFailed(ToolName.NotesDelete, rawJson, source, "缺少 note_id 或 note_ids")
+        val notes = noteIds.mapNotNull { noteUseCases.getNote(it) }.filter { !it.deleted }
+        if (notes.isEmpty()) return validationFailed(ToolName.NotesDelete, rawJson, source, "没有可删除的便签")
+        val risk = riskPolicy.classify(CommandRiskInput(toolName = ToolName.NotesDelete, source = source, affectedNoteCount = notes.size))
+        val confirmed = args.optBoolean("confirmed", false) || fromConfirmation
+        if (!confirmed) {
+            val previewJson = JSONObject()
+                .put("summary", "将删除 ${notes.size} 条便签，需要确认")
+                .put("affected_note_ids", notes.map { it.id }.toJsonArray())
+                .put("preview", notes.toPreviewJsonArray())
+                .toString()
+            return createPendingConfirmation(ToolName.NotesDelete, rawJson, source, risk, previewJson, notes.map { it.id }, emptyList(), "将删除 ${notes.size} 条便签，是否确认？")
+        }
+        val logId = existingLogId ?: insertInitialLog(ToolName.NotesDelete, rawJson, source, risk)
+        insertRevisionSnapshots(logId, source, "delete", notes)
+        val affectedIds = mutableListOf<Long>()
+        notes.forEach { note ->
+            if (noteUseCases.softDeleteNote(note.id)) affectedIds += note.id
+        }
+        val status = if (affectedIds.size == notes.size) CommandStatus.Success else CommandStatus.PartialSuccess
+        val resultJson = JSONObject().put("deleted", true).put("affected_note_ids", affectedIds.toJsonArray()).toString()
+        finishLog(logId = logId, status = status, resultJson = resultJson, affectedNoteIds = affectedIds, confirmationStatus = if (fromConfirmation) ConfirmationStatus.Confirmed else ConfirmationStatus.NotRequired)
+        return CommandResult.success("已删除 ${affectedIds.size} 条便签", risk, logId, affectedNoteIds = affectedIds, resultJson = resultJson)
+    }
+
+    private suspend fun bindTags(
+        args: JSONObject,
+        rawJson: String,
+        source: CommandSource,
+        existingLogId: Long?,
+        fromConfirmation: Boolean,
+    ): CommandResult {
+        val noteIds = args.noteIds()
+        val tagNames = args.tagNames()
+        if (noteIds.isEmpty()) return validationFailed(ToolName.TagsBind, rawJson, source, "缺少 note_id 或 note_ids")
+        if (tagNames.isEmpty()) return validationFailed(ToolName.TagsBind, rawJson, source, "缺少 tags")
+        val mode = TagBindMode.fromStorage(args.optString("mode", "add")) ?: TagBindMode.Add
+        val notes = noteIds.mapNotNull { noteUseCases.getNote(it) }.filter { !it.deleted }
+        if (notes.isEmpty()) return validationFailed(ToolName.TagsBind, rawJson, source, "没有可修改标签的便签")
+        val riskInput = CommandRiskInput(toolName = ToolName.TagsBind, source = source, affectedNoteCount = notes.size, tagBindMode = mode)
+        val risk = riskPolicy.classify(riskInput)
+        val confirmed = args.optBoolean("confirmed", false) || fromConfirmation
+        if (riskPolicy.requiresConfirmation(riskInput) && !confirmed) {
+            val previewJson = JSONObject()
+                .put("summary", "将替换 ${notes.size} 条便签的标签，需要确认")
+                .put("mode", mode.storageValue)
+                .put("tags", JSONArray(tagNames))
+                .put("affected_note_ids", notes.map { it.id }.toJsonArray())
+                .put("preview", notes.toPreviewJsonArray())
+                .toString()
+            return createPendingConfirmation(ToolName.TagsBind, rawJson, source, risk, previewJson, notes.map { it.id }, emptyList(), "将替换 ${notes.size} 条便签的标签，是否确认？")
+        }
+        val logId = existingLogId ?: insertInitialLog(ToolName.TagsBind, rawJson, source, risk)
+        if (mode == TagBindMode.Replace) insertRevisionSnapshots(logId, source, "replace_tags", notes)
+        val affectedIds = mutableListOf<Long>()
+        notes.forEach { note ->
+            val nextTags = when (mode) {
+                TagBindMode.Add -> (note.tags.map { it.name } + tagNames).distinctTagNames()
+                TagBindMode.Remove -> note.tags.map { it.name }.filterNot { existing -> tagNames.any { it.equals(existing, ignoreCase = true) } }
+                TagBindMode.Replace -> tagNames.distinctTagNames()
+            }
+            noteUseCases.updateNote(note.id, note.title, note.content, note.type, note.color, nextTags.joinToString("、"))
+            affectedIds += note.id
+        }
+        val resultJson = JSONObject()
+            .put("mode", mode.storageValue)
+            .put("tags", JSONArray(tagNames))
+            .put("affected_note_ids", affectedIds.toJsonArray())
+            .toString()
+        finishLog(logId = logId, status = CommandStatus.Success, resultJson = resultJson, affectedNoteIds = affectedIds, confirmationStatus = if (fromConfirmation) ConfirmationStatus.Confirmed else ConfirmationStatus.NotRequired)
+        return CommandResult.success("已${mode.actionLabel()} ${affectedIds.size} 条便签的标签", risk, logId, affectedNoteIds = affectedIds, resultJson = resultJson)
+    }
+
+    private suspend fun deleteTag(
+        args: JSONObject,
+        rawJson: String,
+        source: CommandSource,
+        existingLogId: Long?,
+        fromConfirmation: Boolean,
+        pendingPreviewJson: String? = null,
+    ): CommandResult {
+        val tagId = args.optLong("tag_id", 0L)
+        if (tagId <= 0) return validationFailed(ToolName.TagsDelete, rawJson, source, "缺少 tag_id")
+        val tags = noteUseCases.listTags().first()
+        val tag = tags.firstOrNull { it.id == tagId } ?: return writeFailedLog(
+            tool = ToolName.TagsDelete,
+            argumentsJson = rawJson,
+            source = source,
+            riskLevel = RiskLevel.High,
+            message = "没有找到标签：$tagId",
+            errorCode = CommandErrorCode.NotFound,
+        )
+        val linkedNotes = allNotes().filter { note -> note.tags.any { it.id == tag.id || it.normalizedName == tag.normalizedName } }
+        val risk = riskPolicy.classify(CommandRiskInput(toolName = ToolName.TagsDelete, source = source, affectedNoteCount = linkedNotes.size, affectedTagCount = 1, linkedNoteCount = linkedNotes.size))
+        val confirmed = args.optBoolean("confirmed", false) || fromConfirmation
+        if (!confirmed) {
+            val previewJson = JSONObject()
+                .put("summary", "将删除标签 #${tag.name}，并从 ${linkedNotes.size} 条便签中移除")
+                .put("tag_id", tag.id)
+                .put("tag_name", tag.name)
+                .put("linked_note_count", linkedNotes.size)
+                .put("affected_note_ids", linkedNotes.map { it.id }.toJsonArray())
+                .put("preview", linkedNotes.toPreviewJsonArray())
+                .toString()
+            return createPendingConfirmation(ToolName.TagsDelete, rawJson, source, risk, previewJson, linkedNotes.map { it.id }, listOf(tag.id), "将删除标签 #${tag.name}，并从 ${linkedNotes.size} 条便签中移除，是否确认？")
+        }
+        if (fromConfirmation && pendingPreviewJson != null) {
+            val expectedCount = runCatching { JSONObject(pendingPreviewJson).optInt("linked_note_count", linkedNotes.size) }.getOrDefault(linkedNotes.size)
+            if (expectedCount != linkedNotes.size) {
+                existingLogId?.let {
+                    finishLog(
+                        logId = it,
+                        status = CommandStatus.Blocked,
+                        errorCode = CommandErrorCode.Conflict,
+                        errorMessage = "标签关联便签数量已变化，请重新发起命令",
+                        confirmationStatus = ConfirmationStatus.Confirmed,
+                    )
+                }
+                return CommandResult.failure(
+                    message = "标签关联便签数量已变化，请重新发起命令",
+                    riskLevel = RiskLevel.High,
+                    commandLogId = existingLogId,
+                    errorCode = CommandErrorCode.Conflict,
+                )
+            }
+        }
+        val logId = existingLogId ?: insertInitialLog(ToolName.TagsDelete, rawJson, source, risk)
+        insertRevisionSnapshots(logId, source, "delete_tag", linkedNotes)
+        val deleted = noteUseCases.deleteTag(tag.id)
+        val status = if (deleted) CommandStatus.Success else CommandStatus.Failed
+        val resultJson = JSONObject()
+            .put("tag_id", tag.id)
+            .put("tag_name", tag.name)
+            .put("affected_note_ids", linkedNotes.map { it.id }.toJsonArray())
+            .toString()
+        finishLog(
+            logId = logId,
+            status = status,
+            resultJson = resultJson,
+            affectedNoteIds = linkedNotes.map { it.id },
+            affectedTagIds = listOf(tag.id),
+            errorCode = if (deleted) null else CommandErrorCode.StorageError,
+            errorMessage = if (deleted) null else "删除标签失败",
+            confirmationStatus = if (fromConfirmation) ConfirmationStatus.Confirmed else ConfirmationStatus.NotRequired,
+        )
+        return if (deleted) {
+            CommandResult.success("已删除标签 #${tag.name}", risk, logId, affectedNoteIds = linkedNotes.map { it.id }, affectedTagIds = listOf(tag.id), resultJson = resultJson)
+        } else {
+            CommandResult.failure("删除标签失败", risk, CommandErrorCode.StorageError, logId)
+        }
     }
 
     private suspend fun unsupported(tool: ToolName, rawJson: String, source: CommandSource): CommandResult =
@@ -296,6 +648,7 @@ class NoteCommandService @Inject constructor(
         rawJson: String,
         source: CommandSource,
         risk: RiskLevel,
+        previewJson: String,
         noteIds: List<Long>,
         tagIds: List<Long>,
         summary: String,
@@ -303,11 +656,6 @@ class NoteCommandService @Inject constructor(
         val logId = insertInitialLog(tool, rawJson, source, risk)
         val now = timeProvider.nowMillis()
         val confirmationId = UUID.randomUUID().toString()
-        val previewJson = JSONObject()
-            .put("summary", summary)
-            .put("affected_note_ids", noteIds.toJsonArray())
-            .put("affected_tag_ids", tagIds.toJsonArray())
-            .toString()
         commandTraceRepository.insertPendingConfirmation(
             PendingConfirmation(
                 confirmationId = confirmationId,
@@ -373,16 +721,31 @@ class NoteCommandService @Inject constructor(
         if (argumentsJson.isBlank()) JSONObject() else JSONObject(argumentsJson)
     }
 
+    private suspend fun allNotes(): List<Note> = buildList {
+        addAll(noteUseCases.listNotes().first())
+        addAll(noteUseCases.listArchivedNotes().first())
+        addAll(noteUseCases.listDeletedNotes().first())
+    }.distinctBy { it.id }
+
     private fun JSONObject.tagsText(): String {
         val explicitTagText = optString("tagText", optString("tag_text", "")).trim()
         if (explicitTagText.isNotBlank()) return explicitTagText
-        val array = optJSONArray("tags") ?: return ""
+        return tagNames().joinToString("、")
+    }
+
+    private fun JSONObject.tagNames(): List<String> {
+        val fromText = optString("tagText", optString("tag_text", "")).trim()
+        if (fromText.isNotBlank()) return fromText.split(Regex("[\\s,，、#]+"))
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .distinctTagNames()
+        val array = optJSONArray("tags") ?: return emptyList()
         return buildList {
             for (index in 0 until array.length()) {
                 val value = array.optString(index).trim()
                 if (value.isNotBlank()) add(value)
             }
-        }.joinToString("、")
+        }.distinctTagNames()
     }
 
     private fun JSONObject.noteIds(): List<Long> {
@@ -426,9 +789,32 @@ class NoteCommandService @Inject constructor(
         })
         .toString()
 
+    private fun List<Note>.toPreviewJsonArray(): JSONArray = JSONArray().also { array ->
+        take(8).forEach { note ->
+            array.put(
+                JSONObject()
+                    .put("note_id", note.id)
+                    .put("title", note.title)
+                    .put("updated_at", note.updatedAt),
+            )
+        }
+    }
+
     private fun List<Long>.toJsonArray(): JSONArray = JSONArray().also { array -> forEach { array.put(it) } }
 
     private fun List<Long>.toJsonArrayString(): String = toJsonArray().toString()
+
+    private fun List<Tag>.toTagText(): String = joinToString("、") { it.name }
+
+    private fun List<String>.distinctTagNames(): List<String> = map { it.trim() }
+        .filter { it.isNotBlank() }
+        .distinctBy { it.lowercase() }
+
+    private fun TagBindMode.actionLabel(): String = when (this) {
+        TagBindMode.Add -> "添加"
+        TagBindMode.Remove -> "移除"
+        TagBindMode.Replace -> "替换"
+    }
 
     companion object {
         private const val CONFIRMATION_TTL_MILLIS = 10 * 60 * 1000L
