@@ -14,6 +14,7 @@ data class NoteUseCases @Inject constructor(
     val setNotePinned: SetNotePinnedUseCase,
     val softDeleteNote: SoftDeleteNoteUseCase,
     val restoreDeletedNote: RestoreDeletedNoteUseCase,
+    val permanentlyDeleteNote: PermanentlyDeleteNoteUseCase,
     val createTag: CreateTagUseCase,
     val renameTag: RenameTagUseCase,
     val deleteTag: DeleteTagUseCase,

@@ -18,8 +18,15 @@ class NoteEditorViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
     private val noteId: Long? = savedStateHandle.get<Long>("noteId")
+    private val initialTag: String = savedStateHandle.get<String>("tag").orEmpty().trim()
 
-    private val _state = MutableStateFlow(NoteEditorState(noteId = noteId, isLoading = noteId != null))
+    private val _state = MutableStateFlow(
+        NoteEditorState(
+            noteId = noteId,
+            tagText = if (noteId == null) initialTag else "",
+            isLoading = noteId != null,
+        ),
+    )
     val state: StateFlow<NoteEditorState> = _state
 
     init {

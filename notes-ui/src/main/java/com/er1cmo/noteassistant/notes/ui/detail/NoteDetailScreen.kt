@@ -1,7 +1,6 @@
 package com.er1cmo.noteassistant.notes.ui.detail
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,17 +15,24 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
@@ -43,6 +49,9 @@ fun NoteDetailRoute(
     viewModel: NoteDetailViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsState()
+    LaunchedEffect(state.hardDeleted) {
+        if (state.hardDeleted) onBackClick()
+    }
     NoteDetailScreen(
         state = state,
         onBackClick = onBackClick,
@@ -55,6 +64,7 @@ fun NoteDetailRoute(
         onTogglePinned = viewModel::togglePinned,
         onDeleteClick = viewModel::softDelete,
         onRestoreClick = viewModel::restore,
+        onPermanentDeleteClick = viewModel::permanentlyDelete,
         onColorClick = onColorClick,
     )
 }
@@ -72,8 +82,11 @@ fun NoteDetailScreen(
     onTogglePinned: () -> Unit,
     onDeleteClick: () -> Unit,
     onRestoreClick: () -> Unit,
+    onPermanentDeleteClick: () -> Unit,
     onColorClick: (Long) -> Unit,
 ) {
+    var showPermanentDeleteDialog by remember { mutableStateOf(false) }
+    val clipboard = LocalClipboardManager.current
     Surface(color = Color.White, modifier = Modifier.fillMaxSize()) {
         Column(
             modifier = Modifier
@@ -105,6 +118,7 @@ fun NoteDetailScreen(
                         title = state.titleInput,
                         content = state.contentInput,
                         tagText = state.tagTextInput,
+                        readOnly = state.note.deleted,
                         onTitleChange = onTitleChange,
                         onContentChange = onContentChange,
                         onTagTextChange = onTagTextChange,
@@ -126,12 +140,40 @@ fun NoteDetailScreen(
                         onTogglePinned = onTogglePinned,
                         onDeleteClick = onDeleteClick,
                         onRestoreClick = onRestoreClick,
+                        onCopyClick = {
+                            clipboard.setText(AnnotatedString(state.note.toCopyText()))
+                        },
+                        onPermanentDeleteClick = { showPermanentDeleteDialog = true },
                         onColorClick = { onColorClick(state.note.id) },
                     )
                     state.message?.let { Text(it, color = Color(0xFF6B7280), style = MaterialTheme.typography.bodySmall) }
                 }
             }
         }
+    }
+
+    if (showPermanentDeleteDialog) {
+        AlertDialog(
+            onDismissRequest = { showPermanentDeleteDialog = false },
+            title = { Text("彻底删除便签？") },
+            text = { Text("彻底删除后无法恢复。确认删除这条便签吗？") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showPermanentDeleteDialog = false
+                        onPermanentDeleteClick()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626)),
+                ) {
+                    Text("彻底删除")
+                }
+            },
+            dismissButton = {
+                Surface(onClick = { showPermanentDeleteDialog = false }, shape = RoundedCornerShape(12.dp), color = Color(0xFFF4F5F7)) {
+                    Text("取消", modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp))
+                }
+            },
+        )
     }
 }
 
@@ -141,6 +183,7 @@ private fun DetailEditorCard(
     title: String,
     content: String,
     tagText: String,
+    readOnly: Boolean,
     onTitleChange: (String) -> Unit,
     onContentChange: (String) -> Unit,
     onTagTextChange: (String) -> Unit,
@@ -164,6 +207,7 @@ private fun DetailEditorCard(
                     color = Color(0xFF20242C),
                     textDecoration = if (note.isDone) TextDecoration.LineThrough else TextDecoration.None,
                 ),
+                readOnly = readOnly,
                 singleLine = false,
             )
             if (note.pinned) {
@@ -182,10 +226,12 @@ private fun DetailEditorCard(
             placeholder = "暂无正文",
             modifier = Modifier.fillMaxWidth(),
             textStyle = MaterialTheme.typography.bodyLarge.copy(color = Color(0xFF404756)),
+            readOnly = readOnly,
             minHeight = 160,
         )
         InlineTagField(
             value = tagText,
+            readOnly = readOnly,
             onValueChange = onTagTextChange,
         )
     }
@@ -198,6 +244,7 @@ private fun InlineTextField(
     placeholder: String,
     modifier: Modifier = Modifier,
     textStyle: TextStyle,
+    readOnly: Boolean,
     singleLine: Boolean = false,
     minHeight: Int = 0,
 ) {
@@ -207,6 +254,7 @@ private fun InlineTextField(
             onValueChange = onValueChange,
             textStyle = textStyle,
             singleLine = singleLine,
+            readOnly = readOnly,
             modifier = Modifier.fillMaxWidth(),
             decorationBox = { innerTextField ->
                 if (value.isBlank()) {
@@ -219,7 +267,7 @@ private fun InlineTextField(
 }
 
 @Composable
-private fun InlineTagField(value: String, onValueChange: (String) -> Unit) {
+private fun InlineTagField(value: String, readOnly: Boolean, onValueChange: (String) -> Unit) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text("#", style = MaterialTheme.typography.bodyMedium, color = Color(0xFF5C6372))
         Spacer(Modifier.width(4.dp))
@@ -228,6 +276,7 @@ private fun InlineTagField(value: String, onValueChange: (String) -> Unit) {
             onValueChange = onValueChange,
             textStyle = MaterialTheme.typography.bodyMedium.copy(color = Color(0xFF5C6372)),
             singleLine = true,
+            readOnly = readOnly,
             modifier = Modifier.weight(1f),
             decorationBox = { innerTextField ->
                 if (value.isBlank()) {
@@ -247,47 +296,56 @@ private fun ActionArea(
     onTogglePinned: () -> Unit,
     onDeleteClick: () -> Unit,
     onRestoreClick: () -> Unit,
+    onCopyClick: () -> Unit,
+    onPermanentDeleteClick: () -> Unit,
     onColorClick: () -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            TypePill(
-                text = "普通便签",
-                selected = note.type == NoteType.Normal,
-                modifier = Modifier.weight(1f),
-                onClick = { onTypeChange(NoteType.Normal) },
+        if (note.deleted) {
+            Text("最近删除中的便签不可编辑，可复制、恢复或彻底删除。", color = Color(0xFF8A8490), style = MaterialTheme.typography.bodySmall)
+            ActionPill(text = "复制内容", onClick = onCopyClick, modifier = Modifier.fillMaxWidth())
+            ActionPill(text = "恢复便签", onClick = onRestoreClick, modifier = Modifier.fillMaxWidth())
+            ActionPill(
+                text = "彻底删除",
+                onClick = onPermanentDeleteClick,
+                modifier = Modifier.fillMaxWidth(),
+                containerColor = Color(0xFFFFE4E6),
+                contentColor = Color(0xFFB42318),
             )
-            TypePill(
-                text = "待办便签",
-                selected = note.type == NoteType.Todo,
-                modifier = Modifier.weight(1f),
-                onClick = { onTypeChange(NoteType.Todo) },
-            )
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            if (note.type == NoteType.Todo && !note.deleted) {
-                ActionPill(
-                    text = if (note.isDone) "取消完成" else "标记完成",
+        } else {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                TypePill(
+                    text = "普通便签",
+                    selected = note.type == NoteType.Normal,
                     modifier = Modifier.weight(1f),
-                    onClick = onToggleDone,
+                    onClick = { onTypeChange(NoteType.Normal) },
+                )
+                TypePill(
+                    text = "待办便签",
+                    selected = note.type == NoteType.Todo,
+                    modifier = Modifier.weight(1f),
+                    onClick = { onTypeChange(NoteType.Todo) },
                 )
             }
-            ActionPill(
-                text = if (note.pinned) "取消置顶" else "置顶",
-                modifier = Modifier.weight(1f),
-                enabled = !note.deleted,
-                onClick = onTogglePinned,
-            )
-            ActionPill(
-                text = "改变颜色",
-                modifier = Modifier.weight(1f),
-                enabled = !note.deleted,
-                onClick = onColorClick,
-            )
-        }
-        if (note.deleted) {
-            ActionPill(text = "恢复便签", onClick = onRestoreClick, modifier = Modifier.fillMaxWidth())
-        } else {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                if (note.type == NoteType.Todo) {
+                    ActionPill(
+                        text = if (note.isDone) "取消完成" else "标记完成",
+                        modifier = Modifier.weight(1f),
+                        onClick = onToggleDone,
+                    )
+                }
+                ActionPill(
+                    text = if (note.pinned) "取消置顶" else "置顶",
+                    modifier = Modifier.weight(1f),
+                    onClick = onTogglePinned,
+                )
+                ActionPill(
+                    text = "改变颜色",
+                    modifier = Modifier.weight(1f),
+                    onClick = onColorClick,
+                )
+            }
             ActionPill(
                 text = "删除便签",
                 onClick = onDeleteClick,
@@ -351,4 +409,16 @@ private fun StatusBox(text: String) {
             .padding(18.dp),
         color = Color(0xFF6B7280),
     )
+}
+
+private fun Note.toCopyText(): String = buildString {
+    appendLine(title.ifBlank { "未命名便签" })
+    if (content.isNotBlank()) {
+        appendLine()
+        appendLine(content)
+    }
+    if (tags.isNotEmpty()) {
+        appendLine()
+        append(tags.joinToString(" ") { "#${it.name}" })
+    }
 }

@@ -30,6 +30,7 @@ interface NoteRepository {
     suspend fun setPinned(id: Long, pinned: Boolean): Boolean
     suspend fun softDelete(id: Long): Boolean
     suspend fun restoreDeleted(id: Long): Boolean
+    suspend fun permanentlyDelete(id: Long): Boolean
     suspend fun createTag(name: String): Boolean
     suspend fun renameTag(id: Long, name: String): Boolean
     suspend fun deleteTag(id: Long): Boolean

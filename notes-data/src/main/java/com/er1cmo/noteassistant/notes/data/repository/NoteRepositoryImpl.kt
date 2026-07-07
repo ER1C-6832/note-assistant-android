@@ -165,6 +165,13 @@ class NoteRepositoryImpl @Inject constructor(
         true
     }
 
+    override suspend fun permanentlyDelete(id: Long): Boolean = withContext(dispatchers.io) {
+        val existing = noteDao.getNoteById(id) ?: return@withContext false
+        if (!existing.deleted) return@withContext false
+        noteTagDao.deleteForNote(id)
+        noteDao.deleteNoteById(id) > 0
+    }
+
     override suspend fun createTag(name: String): Boolean = withContext(dispatchers.io) {
         val cleaned = name.cleanedTagName()
         if (cleaned.isBlank()) return@withContext false

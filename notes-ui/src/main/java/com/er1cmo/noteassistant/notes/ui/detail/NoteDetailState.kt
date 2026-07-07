@@ -10,9 +10,10 @@ data class NoteDetailState(
     val isLoading: Boolean = true,
     val isSaving: Boolean = false,
     val message: String? = null,
+    val hardDeleted: Boolean = false,
 ) {
     val isDirty: Boolean
-        get() = note != null && (
+        get() = note != null && !note.deleted && (
             titleInput != note.title ||
                 contentInput != note.content ||
                 tagTextInput != note.tags.joinToString("、") { it.name }

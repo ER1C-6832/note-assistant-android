@@ -31,6 +31,7 @@ class NoteDetailViewModel @Inject constructor(
             viewModelScope.launch {
                 noteUseCases.observeNote(id).collect { note ->
                     val current = _state.value
+                    if (current.hardDeleted) return@collect
                     if (note == null) {
                         _state.update { it.copy(note = null, isLoading = false, message = "便签已不存在") }
                     } else if (!current.isDirty || current.isSaving || current.note?.id != note.id) {
@@ -58,7 +59,7 @@ class NoteDetailViewModel @Inject constructor(
     fun saveTextFields() {
         val current = _state.value
         val note = current.note ?: return
-        if (current.isSaving || !current.isDirty) return
+        if (note.deleted || current.isSaving || !current.isDirty) return
         viewModelScope.launch {
             _state.update { it.copy(isSaving = true, message = null) }
             noteUseCases.updateNote(
@@ -69,9 +70,9 @@ class NoteDetailViewModel @Inject constructor(
                 color = note.color,
                 tagText = current.tagTextInput,
             )
-            val updated = noteUseCases.getNote(note.id)
-            if (updated != null) {
-                _state.value = updated.toState(isSaving = false, message = "已保存")
+            val refreshed = noteUseCases.getNote(note.id)
+            if (refreshed != null) {
+                _state.value = refreshed.toState(isSaving = false, message = "已保存")
             } else {
                 _state.update { it.copy(isSaving = false, message = "便签已不存在") }
             }
@@ -81,7 +82,7 @@ class NoteDetailViewModel @Inject constructor(
     fun changeType(type: NoteType) {
         val current = _state.value
         val note = current.note ?: return
-        if (current.isSaving || note.type == type) return
+        if (note.deleted || current.isSaving || note.type == type) return
         viewModelScope.launch {
             _state.update { it.copy(isSaving = true, message = null) }
             noteUseCases.updateNote(
@@ -92,9 +93,9 @@ class NoteDetailViewModel @Inject constructor(
                 color = note.color,
                 tagText = current.tagTextInput,
             )
-            val updated = noteUseCases.getNote(note.id)
-            if (updated != null) {
-                _state.value = updated.toState(isSaving = false, message = "类型已更新")
+            val refreshed = noteUseCases.getNote(note.id)
+            if (refreshed != null) {
+                _state.value = refreshed.toState(isSaving = false, message = "类型已更新")
             } else {
                 _state.update { it.copy(isSaving = false, message = "便签已不存在") }
             }
@@ -128,6 +129,19 @@ class NoteDetailViewModel @Inject constructor(
         val note = _state.value.note ?: return
         viewModelScope.launch {
             noteUseCases.restoreDeletedNote(note.id)
+        }
+    }
+
+    fun permanentlyDelete() {
+        val note = _state.value.note ?: return
+        if (!note.deleted) return
+        viewModelScope.launch {
+            val deleted = noteUseCases.permanentlyDeleteNote(note.id)
+            if (deleted) {
+                _state.update { it.copy(note = null, hardDeleted = true, message = "已彻底删除") }
+            } else {
+                _state.update { it.copy(message = "彻底删除失败，请重试") }
+            }
         }
     }
 

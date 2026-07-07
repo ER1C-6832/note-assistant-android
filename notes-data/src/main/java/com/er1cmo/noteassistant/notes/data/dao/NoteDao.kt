@@ -32,4 +32,7 @@ interface NoteDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     fun insertNotes(notes: List<NoteEntity>)
+
+    @Query("DELETE FROM notes WHERE id = :id")
+    fun deleteNoteById(id: Long): Int
 }

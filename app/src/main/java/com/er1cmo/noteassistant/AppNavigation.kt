@@ -28,7 +28,13 @@ fun AppNavigation() {
         }
         composable(AppRoute.Notes.route) {
             NoteListRoute(
-                onCreateClick = { navController.navigate(AppRoute.Editor.route) },
+                onCreateClick = { initialTag ->
+                    if (initialTag.isNullOrBlank()) {
+                        navController.navigate(AppRoute.Editor.route)
+                    } else {
+                        navController.navigate(AppRoute.EditorWithTag.createRoute(initialTag))
+                    }
+                },
                 onNoteClick = { noteId -> navController.navigate(AppRoute.Detail.createRoute(noteId)) },
                 onSettingsClick = { navController.navigate(AppRoute.Settings.route) },
             )
@@ -49,6 +55,12 @@ fun AppNavigation() {
             NoteColorPickerRoute(onBackClick = { navController.popBackStack() })
         }
         composable(AppRoute.Editor.route) {
+            NoteEditorRoute(onBackClick = { navController.popBackStack() })
+        }
+        composable(
+            route = AppRoute.EditorWithTag.route,
+            arguments = listOf(navArgument("tag") { type = NavType.StringType }),
+        ) {
             NoteEditorRoute(onBackClick = { navController.popBackStack() })
         }
         composable(
