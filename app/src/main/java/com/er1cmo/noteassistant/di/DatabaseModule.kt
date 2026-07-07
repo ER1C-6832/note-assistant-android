@@ -2,8 +2,11 @@ package com.er1cmo.noteassistant.di
 
 import android.content.Context
 import androidx.room.Room
+import com.er1cmo.noteassistant.notes.data.dao.AssistantCommandLogDao
 import com.er1cmo.noteassistant.notes.data.dao.NoteDao
+import com.er1cmo.noteassistant.notes.data.dao.NoteRevisionDao
 import com.er1cmo.noteassistant.notes.data.dao.NoteTagDao
+import com.er1cmo.noteassistant.notes.data.dao.PendingConfirmationDao
 import com.er1cmo.noteassistant.notes.data.dao.TagDao
 import com.er1cmo.noteassistant.notes.data.db.NoteDatabase
 import dagger.Module
@@ -22,7 +25,10 @@ object DatabaseModule {
         context,
         NoteDatabase::class.java,
         "note_assistant.db",
-    ).addMigrations(NoteDatabase.MIGRATION_1_2).build()
+    ).addMigrations(
+        NoteDatabase.MIGRATION_1_2,
+        NoteDatabase.MIGRATION_2_3,
+    ).build()
 
     @Provides
     fun provideNoteDao(database: NoteDatabase): NoteDao = database.noteDao()
@@ -32,4 +38,13 @@ object DatabaseModule {
 
     @Provides
     fun provideNoteTagDao(database: NoteDatabase): NoteTagDao = database.noteTagDao()
+
+    @Provides
+    fun provideNoteRevisionDao(database: NoteDatabase): NoteRevisionDao = database.noteRevisionDao()
+
+    @Provides
+    fun provideAssistantCommandLogDao(database: NoteDatabase): AssistantCommandLogDao = database.assistantCommandLogDao()
+
+    @Provides
+    fun providePendingConfirmationDao(database: NoteDatabase): PendingConfirmationDao = database.pendingConfirmationDao()
 }

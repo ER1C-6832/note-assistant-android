@@ -1,6 +1,8 @@
 package com.er1cmo.noteassistant.di
 
+import com.er1cmo.noteassistant.notes.data.repository.CommandTraceRepositoryImpl
 import com.er1cmo.noteassistant.notes.data.repository.NoteRepositoryImpl
+import com.er1cmo.noteassistant.notes.domain.repository.CommandTraceRepository
 import com.er1cmo.noteassistant.notes.domain.repository.NoteRepository
 import dagger.Binds
 import dagger.Module
@@ -14,4 +16,8 @@ abstract class RepositoryModule {
     @Binds
     @Singleton
     abstract fun bindNoteRepository(impl: NoteRepositoryImpl): NoteRepository
+
+    @Binds
+    @Singleton
+    abstract fun bindCommandTraceRepository(impl: CommandTraceRepositoryImpl): CommandTraceRepository
 }
