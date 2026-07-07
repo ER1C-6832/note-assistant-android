@@ -12,6 +12,9 @@ interface NoteDao {
     @Query("SELECT * FROM notes WHERE deleted = 0 AND archived = 0 ORDER BY pinned DESC, updated_at DESC, id DESC")
     fun observeActiveNotes(): Flow<List<NoteEntity>>
 
+    @Query("SELECT * FROM notes WHERE deleted = 0 AND archived = 1 ORDER BY archived_at DESC, updated_at DESC, id DESC")
+    fun observeArchivedNotes(): Flow<List<NoteEntity>>
+
     @Query("SELECT * FROM notes WHERE deleted = 1 ORDER BY deleted_at DESC, updated_at DESC, id DESC")
     fun observeDeletedNotes(): Flow<List<NoteEntity>>
 

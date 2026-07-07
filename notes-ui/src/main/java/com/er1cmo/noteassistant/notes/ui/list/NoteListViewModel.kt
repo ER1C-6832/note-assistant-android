@@ -2,6 +2,7 @@ package com.er1cmo.noteassistant.notes.ui.list
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.er1cmo.noteassistant.app.settings.SettingsRepository
 import com.er1cmo.noteassistant.notes.domain.model.NoteType
 import com.er1cmo.noteassistant.notes.domain.usecase.NoteUseCases
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -14,16 +15,36 @@ import javax.inject.Inject
 @HiltViewModel
 class NoteListViewModel @Inject constructor(
     private val noteUseCases: NoteUseCases,
+    settingsRepository: SettingsRepository,
 ) : ViewModel() {
-    val state = combine(
+    private data class NoteBundle(
+        val notes: List<com.er1cmo.noteassistant.notes.domain.model.Note>,
+        val deletedNotes: List<com.er1cmo.noteassistant.notes.domain.model.Note>,
+        val archivedNotes: List<com.er1cmo.noteassistant.notes.domain.model.Note>,
+        val tags: List<com.er1cmo.noteassistant.notes.domain.model.Tag>,
+    )
+
+    private val noteBundle = combine(
         noteUseCases.listNotes(),
         noteUseCases.listDeletedNotes(),
+        noteUseCases.listArchivedNotes(),
         noteUseCases.listTags(),
-    ) { notes, deletedNotes, tags ->
+    ) { notes, deletedNotes, archivedNotes, tags ->
+        NoteBundle(notes = notes, deletedNotes = deletedNotes, archivedNotes = archivedNotes, tags = tags)
+    }
+
+    val state = combine(
+        noteBundle,
+        settingsRepository.homeBackgroundColor,
+        settingsRepository.tagDrawerBackgroundColor,
+    ) { bundle, homeBackgroundColor, tagDrawerBackgroundColor ->
         NoteListState(
-            notes = notes,
-            deletedNotes = deletedNotes,
-            tags = tags,
+            notes = bundle.notes,
+            deletedNotes = bundle.deletedNotes,
+            archivedNotes = bundle.archivedNotes,
+            tags = bundle.tags,
+            homeBackgroundColor = homeBackgroundColor,
+            tagDrawerBackgroundColor = tagDrawerBackgroundColor,
             isLoading = false,
         )
     }.stateIn(
@@ -56,10 +77,17 @@ class NoteListViewModel @Inject constructor(
         viewModelScope.launch {
             noteIds.forEach { noteId ->
                 val note = noteUseCases.getNote(noteId)
-                if (note?.type == NoteType.Todo && !note.deleted) {
+                if (note?.type == NoteType.Todo && !note.deleted && !note.archived) {
                     noteUseCases.toggleTodoDone(noteId, done)
                 }
             }
+        }
+    }
+
+    fun setArchived(noteIds: Set<Long>, archived: Boolean) {
+        if (noteIds.isEmpty()) return
+        viewModelScope.launch {
+            noteIds.forEach { noteUseCases.setNoteArchived(it, archived) }
         }
     }
 
@@ -90,7 +118,7 @@ class NoteListViewModel @Inject constructor(
         viewModelScope.launch {
             noteIds.forEach { noteId ->
                 val note = noteUseCases.getNote(noteId) ?: return@forEach
-                if (note.deleted) return@forEach
+                if (note.deleted || note.archived) return@forEach
                 val mergedTags = (note.tags.map { it.name } + newTags)
                     .map { it.trim() }
                     .filter { it.isNotEmpty() }

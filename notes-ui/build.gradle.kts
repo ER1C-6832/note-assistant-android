@@ -38,6 +38,7 @@ dependencies {
     implementation(project(":core-common"))
     implementation(project(":notes-domain"))
     implementation(project(":assistant-runtime"))
+    implementation(project(":app-settings"))
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.lifecycle.viewmodel.compose)

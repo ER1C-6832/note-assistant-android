@@ -20,6 +20,8 @@ class SettingsRepository @Inject constructor(
     private object Keys {
         val assistantEnabled = booleanPreferencesKey("assistant_enabled")
         val websocketUrl = stringPreferencesKey("websocket_url")
+        val homeBackgroundColor = stringPreferencesKey("home_background_color")
+        val tagDrawerBackgroundColor = stringPreferencesKey("tag_drawer_background_color")
     }
 
     val assistantEnabled: Flow<Boolean> = context.appSettingsDataStore.data.map { prefs ->
@@ -30,11 +32,32 @@ class SettingsRepository @Inject constructor(
         prefs[Keys.websocketUrl] ?: "wss://example.invalid/xiaozhi"
     }
 
+    val homeBackgroundColor: Flow<String> = context.appSettingsDataStore.data.map { prefs ->
+        prefs[Keys.homeBackgroundColor] ?: DEFAULT_HOME_BACKGROUND
+    }
+
+    val tagDrawerBackgroundColor: Flow<String> = context.appSettingsDataStore.data.map { prefs ->
+        prefs[Keys.tagDrawerBackgroundColor] ?: DEFAULT_TAG_DRAWER_BACKGROUND
+    }
+
     suspend fun setAssistantEnabled(enabled: Boolean) {
         context.appSettingsDataStore.edit { prefs -> prefs[Keys.assistantEnabled] = enabled }
     }
 
     suspend fun setWebsocketUrl(url: String) {
         context.appSettingsDataStore.edit { prefs -> prefs[Keys.websocketUrl] = url }
+    }
+
+    suspend fun setHomeBackgroundColor(hex: String) {
+        context.appSettingsDataStore.edit { prefs -> prefs[Keys.homeBackgroundColor] = hex }
+    }
+
+    suspend fun setTagDrawerBackgroundColor(hex: String) {
+        context.appSettingsDataStore.edit { prefs -> prefs[Keys.tagDrawerBackgroundColor] = hex }
+    }
+
+    companion object {
+        const val DEFAULT_HOME_BACKGROUND = "#FFFFFF"
+        const val DEFAULT_TAG_DRAWER_BACKGROUND = "#FFF3D1"
     }
 }

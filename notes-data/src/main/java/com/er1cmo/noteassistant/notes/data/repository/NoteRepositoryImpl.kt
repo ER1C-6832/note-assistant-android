@@ -37,6 +37,12 @@ class NoteRepositoryImpl @Inject constructor(
         noteTagDao.observeAll(),
     ) { notes, tags, refs -> notes.map { it.toDomain(tagsForNote(it.id, tags, refs)) } }
 
+    override fun observeArchivedNotes(): Flow<List<Note>> = combine(
+        noteDao.observeArchivedNotes(),
+        tagDao.observeTags(),
+        noteTagDao.observeAll(),
+    ) { notes, tags, refs -> notes.map { it.toDomain(tagsForNote(it.id, tags, refs)) } }
+
     override fun observeDeletedNotes(): Flow<List<Note>> = combine(
         noteDao.observeDeletedNotes(),
         tagDao.observeTags(),
@@ -139,6 +145,21 @@ class NoteRepositoryImpl @Inject constructor(
         if (existing.deleted) return@withContext false
         if (existing.pinned == pinned) return@withContext true
         noteDao.insertNote(existing.copy(pinned = pinned, lastEditedSource = "manual"))
+        true
+    }
+
+    override suspend fun setArchived(id: Long, archived: Boolean): Boolean = withContext(dispatchers.io) {
+        val existing = noteDao.getNoteById(id) ?: return@withContext false
+        if (existing.deleted) return@withContext false
+        if (existing.archived == archived) return@withContext true
+        val now = timeProvider.nowMillis()
+        noteDao.insertNote(
+            existing.copy(
+                archived = archived,
+                archivedAt = if (archived) now else null,
+                lastEditedSource = "manual",
+            ),
+        )
         true
     }
 

@@ -1,5 +1,6 @@
 package com.er1cmo.noteassistant.notes.ui.list
 
+import android.graphics.Color as AndroidColor
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.slideInHorizontally
@@ -17,6 +18,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -54,6 +56,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.er1cmo.noteassistant.notes.domain.model.Note
@@ -61,14 +64,17 @@ import com.er1cmo.noteassistant.notes.domain.model.NoteType
 import com.er1cmo.noteassistant.notes.domain.model.Tag
 import com.er1cmo.noteassistant.notes.ui.R
 import com.er1cmo.noteassistant.notes.ui.components.NoteCard
+import kotlin.math.roundToInt
 
 private const val FILTER_ALL = "全部"
+private const val FILTER_PINNED = "置顶"
 private const val FILTER_TODO = "待办"
 private const val FILTER_DONE = "已完成"
-private const val FILTER_PINNED = "置顶"
+private const val FILTER_ARCHIVED = "已归档"
 private const val FILTER_DELETED = "最近删除"
 private const val TAG_PREFIX = "tag-id:"
 private val MAIN_FILTERS = listOf(FILTER_ALL, FILTER_PINNED, FILTER_TODO, FILTER_DONE)
+private val DRAWER_FIXED_FILTERS = listOf(FILTER_ALL, FILTER_PINNED, FILTER_TODO, FILTER_DONE, FILTER_ARCHIVED, FILTER_DELETED)
 
 private enum class BatchConfirmAction {
     SoftDelete,
@@ -92,6 +98,7 @@ fun NoteListRoute(
         onTodoCheckedChange = viewModel::toggleTodoDone,
         onBatchSetPinned = viewModel::setPinned,
         onBatchSetDone = viewModel::setTodoDone,
+        onBatchSetArchived = viewModel::setArchived,
         onBatchSoftDelete = viewModel::softDelete,
         onBatchRestore = viewModel::restoreDeleted,
         onBatchPermanentDelete = viewModel::permanentlyDelete,
@@ -112,6 +119,7 @@ fun NoteListScreen(
     onTodoCheckedChange: (Long, Boolean) -> Unit,
     onBatchSetPinned: (Set<Long>, Boolean) -> Unit,
     onBatchSetDone: (Set<Long>, Boolean) -> Unit,
+    onBatchSetArchived: (Set<Long>, Boolean) -> Unit,
     onBatchSoftDelete: (Set<Long>) -> Unit,
     onBatchRestore: (Set<Long>) -> Unit,
     onBatchPermanentDelete: (Set<Long>) -> Unit,
@@ -130,6 +138,7 @@ fun NoteListScreen(
     var confirmAction by remember { mutableStateOf<BatchConfirmAction?>(null) }
     var snackbarMessage by remember { mutableStateOf<String?>(null) }
     var pinnedHomeTagId by rememberSaveable { mutableStateOf<Long?>(null) }
+    var pageDragOffset by remember { mutableStateOf(0f) }
     val snackbarHostState = remember { SnackbarHostState() }
 
     val selectedTag = remember(state.tags, selectedFilter) {
@@ -138,10 +147,14 @@ fun NoteListScreen(
     val pinnedHomeTag = remember(state.tags, pinnedHomeTagId) {
         pinnedHomeTagId?.let { id -> state.tags.firstOrNull { it.id == id } }
     }
+    val swipeFilters = remember(pinnedHomeTag) {
+        MAIN_FILTERS + listOfNotNull(pinnedHomeTag?.filterValue())
+    }
     val selectedCreateTag = selectedTag?.name
-    val displayNotes = remember(state.notes, state.deletedNotes, selectedFilter, selectedTag, searchQuery) {
+    val displayNotes = remember(state.notes, state.deletedNotes, state.archivedNotes, selectedFilter, selectedTag, searchQuery) {
         val scopedNotes = when {
             selectedFilter == FILTER_DELETED -> state.deletedNotes
+            selectedFilter == FILTER_ARCHIVED -> state.archivedNotes
             selectedFilter == FILTER_TODO -> state.notes.filter { it.type == NoteType.Todo && !it.isDone }
             selectedFilter == FILTER_DONE -> state.notes.filter { it.type == NoteType.Todo && it.isDone }
             selectedFilter == FILTER_PINNED -> state.notes.filter { it.pinned }
@@ -155,10 +168,17 @@ fun NoteListScreen(
     val displayedIds = remember(displayNotes) { displayNotes.map { it.id }.toSet() }
     val selectedNotes = remember(displayNotes, selectedIds) { displayNotes.filter { it.id in selectedIds } }
     val isDeletedScope = selectedFilter == FILTER_DELETED
+    val isArchivedScope = selectedFilter == FILTER_ARCHIVED
     val scopeLabel = selectedFilter.labelFor(selectedTag)
+    val homeBackground = colorFromHex(state.homeBackgroundColor, Color.White)
+    val tagDrawerBackground = colorFromHex(state.tagDrawerBackgroundColor, Color(0xFFFFF3D1))
 
     fun exitSelection() {
         selectionMode = false
+        selectedIds = emptySet()
+    }
+
+    fun clearSelectionOnly() {
         selectedIds = emptySet()
     }
 
@@ -168,21 +188,31 @@ fun NoteListScreen(
     }
 
     fun switchToNextMainFilter() {
-        selectFilter(selectedFilter.nextMainFilter())
+        val currentIndex = swipeFilters.indexOf(selectedFilter)
+        val next = when {
+            currentIndex in 0 until swipeFilters.lastIndex -> swipeFilters[currentIndex + 1]
+            currentIndex == -1 -> FILTER_ALL
+            else -> selectedFilter
+        }
+        if (next != selectedFilter) selectFilter(next)
     }
 
     fun switchToPreviousOrOpenTags() {
         if (selectedFilter == FILTER_ALL) {
             tagPanelOpen = true
-        } else {
-            selectFilter(selectedFilter.previousMainFilter())
+            return
         }
+        val currentIndex = swipeFilters.indexOf(selectedFilter)
+        val previous = when {
+            currentIndex > 0 -> swipeFilters[currentIndex - 1]
+            currentIndex == -1 -> FILTER_ALL
+            else -> selectedFilter
+        }
+        if (previous != selectedFilter) selectFilter(previous)
     }
 
     LaunchedEffect(pinnedHomeTagId, state.tags) {
-        if (pinnedHomeTagId != null && pinnedHomeTag == null) {
-            pinnedHomeTagId = null
-        }
+        if (pinnedHomeTagId != null && pinnedHomeTag == null) pinnedHomeTagId = null
     }
 
     LaunchedEffect(displayedIds) {
@@ -203,11 +233,11 @@ fun NoteListScreen(
     }
 
     Scaffold(
-        containerColor = Color.White,
+        containerColor = homeBackground,
         snackbarHost = { SnackbarHost(snackbarHostState) },
     ) { innerPadding ->
         Surface(
-            color = Color.White,
+            color = homeBackground,
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding),
@@ -231,17 +261,16 @@ fun NoteListScreen(
                         onTagPanelClick = { tagPanelOpen = true },
                         onFilterSelected = ::selectFilter,
                     )
-                    SearchSummary(
-                        scopeLabel = scopeLabel,
-                        searchQuery = searchQuery,
-                        resultCount = displayNotes.size,
-                    )
+                    SearchSummary(scopeLabel = scopeLabel, searchQuery = searchQuery, resultCount = displayNotes.size)
 
-                    val swipeModifier = Modifier.swipeToSwitchFilters(
-                        enabled = !selectionMode && !tagPanelOpen,
-                        onSwipeLeft = ::switchToNextMainFilter,
-                        onSwipeRight = ::switchToPreviousOrOpenTags,
-                    )
+                    val swipeModifier = Modifier
+                        .offset { IntOffset(pageDragOffset.roundToInt(), 0) }
+                        .swipeToSwitchFilters(
+                            enabled = !selectionMode && !tagPanelOpen,
+                            onDragOffsetChange = { pageDragOffset = it },
+                            onSwipeLeft = ::switchToNextMainFilter,
+                            onSwipeRight = ::switchToPreviousOrOpenTags,
+                        )
 
                     if (displayNotes.isEmpty()) {
                         EmptyNotes(
@@ -263,11 +292,7 @@ fun NoteListScreen(
                                     selected = selected,
                                     selectionMode = selectionMode,
                                     onClick = {
-                                        if (selectionMode) {
-                                            selectedIds = selectedIds.toggle(note.id)
-                                        } else {
-                                            onNoteClick(note.id)
-                                        }
+                                        if (selectionMode) selectedIds = selectedIds.toggle(note.id) else onNoteClick(note.id)
                                     },
                                     onLongClick = {
                                         selectionMode = true
@@ -281,7 +306,7 @@ fun NoteListScreen(
                     }
                 }
 
-                if (!selectionMode && !isDeletedScope) {
+                if (!selectionMode && !isDeletedScope && !isArchivedScope) {
                     Button(
                         onClick = { onCreateClick(selectedCreateTag) },
                         shape = RoundedCornerShape(22.dp),
@@ -292,9 +317,7 @@ fun NoteListScreen(
                             .width(154.dp)
                             .height(46.dp),
                         contentPadding = ButtonDefaults.ContentPadding,
-                    ) {
-                        Text("+ 新建")
-                    }
+                    ) { Text("+ 新建") }
                 }
 
                 if (!selectionMode) {
@@ -308,9 +331,7 @@ fun NoteListScreen(
                         shape = CircleShape,
                         containerColor = Color(0xFF5E6FFF),
                         contentColor = Color.White,
-                    ) {
-                        Box(Modifier.size(22.dp))
-                    }
+                    ) { Box(Modifier.size(22.dp)) }
                 }
 
                 if (selectionMode) {
@@ -319,12 +340,9 @@ fun NoteListScreen(
                         totalVisibleCount = displayNotes.size,
                         allVisibleSelected = displayedIds.isNotEmpty() && selectedIds.containsAll(displayedIds),
                         isDeletedScope = isDeletedScope,
+                        isArchivedScope = isArchivedScope,
                         onSelectAllClick = {
-                            selectedIds = if (displayedIds.isNotEmpty() && selectedIds.containsAll(displayedIds)) {
-                                emptySet()
-                            } else {
-                                displayedIds
-                            }
+                            selectedIds = if (displayedIds.isNotEmpty() && selectedIds.containsAll(displayedIds)) emptySet() else displayedIds
                         },
                         onExitClick = ::exitSelection,
                         onSetPinned = { pinned ->
@@ -338,6 +356,13 @@ fun NoteListScreen(
                             if (selectedIds.isNotEmpty()) {
                                 onBatchSetDone(selectedIds, done)
                                 snackbarMessage = if (done) "已标记完成" else "已取消完成"
+                                exitSelection()
+                            }
+                        },
+                        onSetArchived = { archived ->
+                            if (selectedIds.isNotEmpty()) {
+                                onBatchSetArchived(selectedIds, archived)
+                                snackbarMessage = if (archived) "已归档 ${selectedIds.size} 条便签" else "已取消归档 ${selectedIds.size} 条便签"
                                 exitSelection()
                             }
                         },
@@ -375,7 +400,9 @@ fun NoteListScreen(
                         selectedFilter = selectedFilter,
                         pinnedHomeTagId = pinnedHomeTagId,
                         tags = state.tags,
+                        archivedCount = state.archivedNotes.size,
                         deletedCount = state.deletedNotes.size,
+                        drawerColor = tagDrawerBackground,
                         onFilterSelected = {
                             selectFilter(it)
                             tagPanelOpen = false
@@ -419,9 +446,7 @@ fun NoteListScreen(
                         exitSelection()
                     },
                     enabled = batchTagText.isNotBlank() && selectedIds.isNotEmpty(),
-                ) {
-                    Text("保存")
-                }
+                ) { Text("保存") }
             },
             dismissButton = {
                 Surface(onClick = { addTagDialogOpen = false }, shape = RoundedCornerShape(12.dp), color = Color(0xFFF4F5F7)) {
@@ -460,9 +485,7 @@ fun NoteListScreen(
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626)),
                     enabled = selectedIds.isNotEmpty(),
-                ) {
-                    Text(if (action == BatchConfirmAction.PermanentDelete) "彻底删除" else "删除")
-                }
+                ) { Text(if (action == BatchConfirmAction.PermanentDelete) "彻底删除" else "删除") }
             },
             dismissButton = {
                 Surface(onClick = { confirmAction = null }, shape = RoundedCornerShape(12.dp), color = Color(0xFFF4F5F7)) {
@@ -551,20 +574,13 @@ private fun SearchBox(query: String, onQueryChange: (String) -> Unit, onClearCli
             modifier = Modifier.weight(1f),
             decorationBox = { innerTextField ->
                 Box(contentAlignment = Alignment.CenterStart) {
-                    if (query.isBlank()) {
-                        Text("搜索标题、正文或标签", color = Color(0xFF8B90A0), style = MaterialTheme.typography.bodyMedium)
-                    }
+                    if (query.isBlank()) Text("搜索标题、正文或标签", color = Color(0xFF8B90A0), style = MaterialTheme.typography.bodyMedium)
                     innerTextField()
                 }
             },
         )
         if (query.isNotEmpty()) {
-            Text(
-                text = "清除",
-                modifier = Modifier.clickable(onClick = onClearClick),
-                color = Color(0xFF3D6BFF),
-                style = MaterialTheme.typography.labelMedium,
-            )
+            Text("清除", modifier = Modifier.clickable(onClick = onClearClick), color = Color(0xFF3D6BFF), style = MaterialTheme.typography.labelMedium)
         }
     }
 }
@@ -581,33 +597,14 @@ private fun FilterBar(
         horizontalArrangement = Arrangement.spacedBy(10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Surface(
-            onClick = onTagPanelClick,
-            shape = RoundedCornerShape(16.dp),
-            color = Color(0xFFFFE3A1),
-            tonalElevation = 1.dp,
-        ) {
-            Text(
-                text = "☰",
-                modifier = Modifier.padding(horizontal = 18.dp, vertical = 9.dp),
-                style = MaterialTheme.typography.titleMedium,
-                color = Color(0xFF604410),
-                maxLines = 1,
-            )
+        Surface(onClick = onTagPanelClick, shape = RoundedCornerShape(16.dp), color = Color(0xFFFFE3A1), tonalElevation = 1.dp) {
+            Text("☰", modifier = Modifier.padding(horizontal = 18.dp, vertical = 9.dp), style = MaterialTheme.typography.titleMedium, color = Color(0xFF604410), maxLines = 1)
         }
         MAIN_FILTERS.forEach { filter ->
-            FilterPill(
-                text = filter,
-                selected = selectedFilter == filter,
-                onClick = { onFilterSelected(filter) },
-            )
+            FilterPill(text = filter, selected = selectedFilter == filter, onClick = { onFilterSelected(filter) })
         }
         pinnedHomeTag?.let { tag ->
-            FilterPill(
-                text = "#${tag.name}",
-                selected = selectedFilter == tag.filterValue(),
-                onClick = { onFilterSelected(tag.filterValue()) },
-            )
+            FilterPill(text = "#${tag.name}", selected = selectedFilter == tag.filterValue(), onClick = { onFilterSelected(tag.filterValue()) })
         }
     }
 }
@@ -633,11 +630,7 @@ private fun FilterPill(text: String, selected: Boolean, onClick: () -> Unit) {
 
 @Composable
 private fun SearchSummary(scopeLabel: String, searchQuery: String, resultCount: Int) {
-    val text = if (searchQuery.isBlank()) {
-        "$scopeLabel · $resultCount 条"
-    } else {
-        "$scopeLabel · 搜索“${searchQuery.trim()}” · $resultCount 条"
-    }
+    val text = if (searchQuery.isBlank()) "$scopeLabel · $resultCount 条" else "$scopeLabel · 搜索“${searchQuery.trim()}” · $resultCount 条"
     Text(text, style = MaterialTheme.typography.bodySmall, color = Color(0xFF7A7280))
 }
 
@@ -647,10 +640,12 @@ private fun SelectionFloatingBar(
     totalVisibleCount: Int,
     allVisibleSelected: Boolean,
     isDeletedScope: Boolean,
+    isArchivedScope: Boolean,
     onSelectAllClick: () -> Unit,
     onExitClick: () -> Unit,
     onSetPinned: (Boolean) -> Unit,
     onSetDone: (Boolean) -> Unit,
+    onSetArchived: (Boolean) -> Unit,
     onAddTag: () -> Unit,
     onSoftDelete: () -> Unit,
     onRestore: () -> Unit,
@@ -662,56 +657,35 @@ private fun SelectionFloatingBar(
     val allPinned = hasSelection && selectedNotes.all { it.pinned }
     val allTodo = hasSelection && selectedNotes.all { it.type == NoteType.Todo }
     val allDone = allTodo && selectedNotes.all { it.isDone }
-    Surface(
-        modifier = modifier,
-        shape = RoundedCornerShape(24.dp),
-        color = Color(0xFFF6F7FB),
-        tonalElevation = 8.dp,
-        shadowElevation = 12.dp,
-    ) {
-        Column(
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
+    Surface(modifier = modifier, shape = RoundedCornerShape(24.dp), color = Color(0xFFF6F7FB), tonalElevation = 8.dp, shadowElevation = 12.dp) {
+        Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = "已选择 $selectedCount 条",
-                    modifier = Modifier.weight(1f),
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold,
-                    color = Color(0xFF222832),
-                )
+                Text("已选择 $selectedCount 条", modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, color = Color(0xFF222832))
                 Text(
                     text = if (allVisibleSelected) "全不选" else "全选",
-                    modifier = Modifier
-                        .clickable(enabled = totalVisibleCount > 0, onClick = onSelectAllClick)
-                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                    modifier = Modifier.clickable(enabled = totalVisibleCount > 0, onClick = onSelectAllClick).padding(horizontal = 8.dp, vertical = 4.dp),
                     color = Color(0xFF3D6BFF),
                     style = MaterialTheme.typography.labelLarge,
                 )
-                Text(
-                    text = "退出",
-                    modifier = Modifier
-                        .clickable(onClick = onExitClick)
-                        .padding(horizontal = 8.dp, vertical = 4.dp),
-                    color = Color(0xFF6B7280),
-                    style = MaterialTheme.typography.labelLarge,
-                )
+                Text("退出", modifier = Modifier.clickable(onClick = onExitClick).padding(horizontal = 8.dp, vertical = 4.dp), color = Color(0xFF6B7280), style = MaterialTheme.typography.labelLarge)
             }
-            Row(
-                modifier = Modifier.horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                if (isDeletedScope) {
-                    CompactActionPill("恢复", enabled = hasSelection, onClick = onRestore)
-                    CompactActionPill("彻底删除", danger = true, enabled = hasSelection, onClick = onPermanentDelete)
-                } else {
-                    CompactActionPill(if (allPinned) "取消置顶" else "置顶", enabled = hasSelection, onClick = { onSetPinned(!allPinned) })
-                    if (allTodo) {
-                        CompactActionPill(if (allDone) "取消完成" else "已完成", enabled = hasSelection, onClick = { onSetDone(!allDone) })
+            Row(modifier = Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                when {
+                    isDeletedScope -> {
+                        CompactActionPill("恢复", enabled = hasSelection, onClick = onRestore)
+                        CompactActionPill("彻底删除", danger = true, enabled = hasSelection, onClick = onPermanentDelete)
                     }
-                    CompactActionPill("加标签", enabled = hasSelection, onClick = onAddTag)
-                    CompactActionPill("删除", danger = true, enabled = hasSelection, onClick = onSoftDelete)
+                    isArchivedScope -> {
+                        CompactActionPill("取消归档", enabled = hasSelection, onClick = { onSetArchived(false) })
+                        CompactActionPill("删除", danger = true, enabled = hasSelection, onClick = onSoftDelete)
+                    }
+                    else -> {
+                        CompactActionPill(if (allPinned) "取消置顶" else "置顶", enabled = hasSelection, onClick = { onSetPinned(!allPinned) })
+                        if (allTodo) CompactActionPill(if (allDone) "取消完成" else "已完成", enabled = hasSelection, onClick = { onSetDone(!allDone) })
+                        CompactActionPill("加标签", enabled = hasSelection, onClick = onAddTag)
+                        CompactActionPill("归档", enabled = hasSelection, onClick = { onSetArchived(true) })
+                        CompactActionPill("删除", danger = true, enabled = hasSelection, onClick = onSoftDelete)
+                    }
                 }
             }
         }
@@ -745,40 +719,32 @@ private fun CompactActionPill(text: String, danger: Boolean = false, enabled: Bo
 }
 
 @Composable
-private fun EmptyNotes(
-    selectedFilter: String,
-    selectedTagName: String?,
-    searchQuery: String,
-    onCreateClick: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
+private fun EmptyNotes(selectedFilter: String, selectedTagName: String?, searchQuery: String, onCreateClick: () -> Unit, modifier: Modifier = Modifier) {
     Column(
-        modifier = modifier
-            .fillMaxWidth()
-            .background(Color(0xFFF6F7FB), RoundedCornerShape(26.dp))
-            .padding(24.dp),
+        modifier = modifier.fillMaxWidth().background(Color(0xFFF6F7FB), RoundedCornerShape(26.dp)).padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         val isSearching = searchQuery.isNotBlank()
         val title = when {
             selectedFilter == FILTER_DELETED && isSearching -> "最近删除中没有相关便签"
             selectedFilter == FILTER_DELETED -> "最近删除为空"
+            selectedFilter == FILTER_ARCHIVED && isSearching -> "已归档中没有相关便签"
+            selectedFilter == FILTER_ARCHIVED -> "已归档为空"
             isSearching -> "没有找到相关便签"
             selectedTagName != null -> "# $selectedTagName 下还没有便签"
             else -> "还没有便签"
         }
         val description = when {
             selectedFilter == FILTER_DELETED -> "软删除的便签会出现在这里。"
+            selectedFilter == FILTER_ARCHIVED -> "归档后的便签只会在这里出现。"
             isSearching -> "试试删减关键词，或切换筛选范围。"
             selectedTagName != null -> "新建便签会自动带上这个标签。"
             else -> "先记下一条想法、待办或临时信息。"
         }
         Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
         Text(description, color = Color(0xFF6B7280))
-        if (selectedFilter != FILTER_DELETED) {
-            Button(onClick = onCreateClick, shape = RoundedCornerShape(18.dp)) {
-                Text(if (selectedTagName != null) "使用 #$selectedTagName 创建" else "创建第一条便签")
-            }
+        if (selectedFilter != FILTER_DELETED && selectedFilter != FILTER_ARCHIVED) {
+            Button(onClick = onCreateClick, shape = RoundedCornerShape(18.dp)) { Text(if (selectedTagName != null) "使用 #$selectedTagName 创建" else "创建第一条便签") }
         }
     }
 }
@@ -788,7 +754,9 @@ private fun TagDrawer(
     selectedFilter: String,
     pinnedHomeTagId: Long?,
     tags: List<Tag>,
+    archivedCount: Int,
     deletedCount: Int,
+    drawerColor: Color,
     onFilterSelected: (String) -> Unit,
     onPinnedHomeTagChange: (Long?) -> Unit,
     onCreateTag: (String) -> Unit,
@@ -801,44 +769,45 @@ private fun TagDrawer(
     var deleteConfirmTag by remember { mutableStateOf<Tag?>(null) }
 
     Surface(
-        modifier = Modifier
-            .fillMaxHeight()
-            .width(286.dp),
+        modifier = Modifier.fillMaxHeight().width(286.dp),
         shape = RoundedCornerShape(topEnd = 28.dp, bottomEnd = 28.dp),
-        color = Color(0xFFFFF3D1),
+        color = drawerColor,
         tonalElevation = 10.dp,
         shadowElevation = 12.dp,
     ) {
         Column(
-            modifier = Modifier
-                .fillMaxHeight()
-                .padding(start = 20.dp, end = 18.dp, top = 26.dp, bottom = 20.dp),
-            verticalArrangement = Arrangement.spacedBy(9.dp),
+            modifier = Modifier.fillMaxHeight().padding(start = 18.dp, end = 16.dp, top = 20.dp, bottom = 18.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            MAIN_FILTERS.forEach { item ->
-                TagDrawerRow(
-                    text = item,
-                    selected = selectedFilter == item,
-                    onClick = { onFilterSelected(item) },
-                )
+            DRAWER_FIXED_FILTERS.forEach { item ->
+                val label = when (item) {
+                    FILTER_ARCHIVED -> "已归档${if (archivedCount > 0) "  $archivedCount" else ""}"
+                    FILTER_DELETED -> "最近删除${if (deletedCount > 0) "  $deletedCount" else ""}"
+                    else -> item
+                }
+                TagDrawerRow(text = label, selected = selectedFilter == item, onClick = { onFilterSelected(item) })
             }
-            TagDrawerRow(
-                text = "最近删除${if (deletedCount > 0) "  $deletedCount" else ""}",
-                selected = selectedFilter == FILTER_DELETED,
-                onClick = { onFilterSelected(FILTER_DELETED) },
-            )
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                OutlinedTextField(
-                    value = newTagName,
-                    onValueChange = { newTagName = it },
-                    modifier = Modifier.weight(1f),
-                    label = { Text("新建标签") },
-                    singleLine = true,
-                )
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(42.dp)
+                        .background(Color.White.copy(alpha = 0.86f), RoundedCornerShape(14.dp))
+                        .padding(horizontal = 12.dp),
+                    contentAlignment = Alignment.CenterStart,
+                ) {
+                    BasicTextField(
+                        value = newTagName,
+                        onValueChange = { newTagName = it },
+                        singleLine = true,
+                        textStyle = MaterialTheme.typography.bodyMedium.copy(color = Color(0xFF3A2D16)),
+                        modifier = Modifier.fillMaxWidth(),
+                        decorationBox = { innerTextField ->
+                            if (newTagName.isBlank()) Text("新建标签", color = Color(0xFF9A8A70), style = MaterialTheme.typography.bodyMedium)
+                            innerTextField()
+                        },
+                    )
+                }
                 Button(
                     onClick = {
                         val name = newTagName.trim()
@@ -848,37 +817,23 @@ private fun TagDrawer(
                         }
                     },
                     shape = RoundedCornerShape(14.dp),
-                    modifier = Modifier.height(48.dp),
+                    modifier = Modifier.height(42.dp),
                     contentPadding = ButtonDefaults.ContentPadding,
-                ) {
-                    Text("创建")
-                }
+                ) { Text("创建") }
             }
 
             Text("已创建标签", style = MaterialTheme.typography.labelLarge, color = Color(0xFF8A7651))
             if (tags.isEmpty()) {
                 Text("暂无标签。", style = MaterialTheme.typography.bodySmall, color = Color(0xFF9A8A70))
             } else {
-                LazyColumn(
-                    modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
+                LazyColumn(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     items(tags, key = { it.id }) { tag ->
                         if (editingTagId == tag.id) {
                             Column(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .background(Color.White.copy(alpha = 0.5f), RoundedCornerShape(16.dp))
-                                    .padding(10.dp),
+                                modifier = Modifier.fillMaxWidth().background(Color.White.copy(alpha = 0.5f), RoundedCornerShape(16.dp)).padding(10.dp),
                                 verticalArrangement = Arrangement.spacedBy(8.dp),
                             ) {
-                                OutlinedTextField(
-                                    value = editingName,
-                                    onValueChange = { editingName = it },
-                                    label = { Text("重命名") },
-                                    singleLine = true,
-                                    modifier = Modifier.fillMaxWidth(),
-                                )
+                                OutlinedTextField(value = editingName, onValueChange = { editingName = it }, label = { Text("重命名") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     Surface(
                                         onClick = {
@@ -889,9 +844,7 @@ private fun TagDrawer(
                                         },
                                         shape = RoundedCornerShape(12.dp),
                                         color = Color(0xFFFFD978),
-                                    ) {
-                                        Text("保存", modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp), color = Color(0xFF3A2A08))
-                                    }
+                                    ) { Text("保存", modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp), color = Color(0xFF3A2A08)) }
                                     Surface(
                                         onClick = {
                                             editingTagId = null
@@ -899,9 +852,7 @@ private fun TagDrawer(
                                         },
                                         shape = RoundedCornerShape(12.dp),
                                         color = Color.White.copy(alpha = 0.72f),
-                                    ) {
-                                        Text("取消", modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp), color = Color(0xFF4A3A20))
-                                    }
+                                    ) { Text("取消", modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp), color = Color(0xFF4A3A20)) }
                                 }
                             }
                         } else {
@@ -914,9 +865,7 @@ private fun TagDrawer(
                                     editingTagId = tag.id
                                     editingName = tag.name
                                 },
-                                onToggleHomePin = {
-                                    onPinnedHomeTagChange(if (pinnedHomeTagId == tag.id) null else tag.id)
-                                },
+                                onToggleHomePin = { onPinnedHomeTagChange(if (pinnedHomeTagId == tag.id) null else tag.id) },
                                 onDelete = { deleteConfirmTag = tag },
                             )
                         }
@@ -938,9 +887,7 @@ private fun TagDrawer(
                         onDeleteTag(tag)
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626)),
-                ) {
-                    Text("删除")
-                }
+                ) { Text("删除") }
             },
             dismissButton = {
                 Surface(onClick = { deleteConfirmTag = null }, shape = RoundedCornerShape(12.dp), color = Color(0xFFF4F5F7)) {
@@ -956,17 +903,12 @@ private fun TagDrawerRow(text: String, selected: Boolean, onClick: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(if (selected) Color(0xFFFFD978) else Color.Transparent, RoundedCornerShape(16.dp))
+            .background(if (selected) Color(0xFFFFD978) else Color.Transparent, RoundedCornerShape(14.dp))
             .clickable(onClick = onClick)
-            .padding(horizontal = 13.dp, vertical = 10.dp),
+            .padding(horizontal = 12.dp, vertical = 7.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(
-            text = text,
-            modifier = Modifier.weight(1f),
-            color = if (selected) Color(0xFF3A2A08) else Color(0xFF4A3A20),
-            style = MaterialTheme.typography.bodyLarge,
-        )
+        Text(text = text, modifier = Modifier.weight(1f), color = if (selected) Color(0xFF3A2A08) else Color(0xFF4A3A20), style = MaterialTheme.typography.bodyMedium)
         if (selected) Text("✓", color = Color(0xFF5E4100), fontWeight = FontWeight.SemiBold)
     }
 }
@@ -982,43 +924,55 @@ private fun TagManageRow(
     onDelete: () -> Unit,
 ) {
     Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(if (selected) Color(0xFFFFD978) else Color.Transparent, RoundedCornerShape(16.dp))
-            .padding(horizontal = 12.dp, vertical = 9.dp),
-        verticalArrangement = Arrangement.spacedBy(7.dp),
+        modifier = Modifier.fillMaxWidth().background(if (selected) Color(0xFFFFD978) else Color.Transparent, RoundedCornerShape(16.dp)).padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
                 text = "# ${tag.name}",
-                modifier = Modifier
-                    .weight(1f)
-                    .clickable(onClick = onSelect),
+                modifier = Modifier.weight(1f).clickable(onClick = onSelect),
                 color = if (selected) Color(0xFF3A2A08) else Color(0xFF4A3A20),
                 style = MaterialTheme.typography.bodyLarge,
             )
             if (selected) Text("✓", color = Color(0xFF5E4100), fontWeight = FontWeight.SemiBold)
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text(
-                text = if (pinnedToHome) "取消固定" else "固定首页",
-                modifier = Modifier.clickable(onClick = onToggleHomePin),
-                color = Color(0xFF3D6BFF),
-                style = MaterialTheme.typography.labelMedium,
-            )
-            Text(
-                text = "重命名",
-                modifier = Modifier.clickable(onClick = onRename),
-                color = Color(0xFF5E4100),
-                style = MaterialTheme.typography.labelMedium,
-            )
-            Text(
-                text = "删除",
-                modifier = Modifier.clickable(onClick = onDelete),
-                color = Color(0xFFB42318),
-                style = MaterialTheme.typography.labelMedium,
-            )
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text(text = if (pinnedToHome) "取消固定" else "固定首页", modifier = Modifier.clickable(onClick = onToggleHomePin), color = Color(0xFF5E4100), style = MaterialTheme.typography.labelMedium)
+            Text(text = "重命名", modifier = Modifier.clickable(onClick = onRename), color = Color(0xFF5E4100), style = MaterialTheme.typography.labelMedium)
+            Text(text = "删除", modifier = Modifier.clickable(onClick = onDelete), color = Color(0xFFB42318), style = MaterialTheme.typography.labelMedium)
         }
+    }
+}
+
+private fun Modifier.swipeToSwitchFilters(
+    enabled: Boolean,
+    onDragOffsetChange: (Float) -> Unit,
+    onSwipeLeft: () -> Unit,
+    onSwipeRight: () -> Unit,
+): Modifier = if (!enabled) {
+    this
+} else {
+    pointerInput(Unit) {
+        var totalDrag = 0f
+        detectHorizontalDragGestures(
+            onDragStart = {
+                totalDrag = 0f
+                onDragOffsetChange(0f)
+            },
+            onHorizontalDrag = { change, dragAmount ->
+                change.consume()
+                totalDrag += dragAmount
+                onDragOffsetChange((totalDrag * 0.38f).coerceIn(-96f, 96f))
+            },
+            onDragEnd = {
+                when {
+                    totalDrag < -72f -> onSwipeLeft()
+                    totalDrag > 72f -> onSwipeRight()
+                }
+                onDragOffsetChange(0f)
+            },
+            onDragCancel = { onDragOffsetChange(0f) },
+        )
     }
 }
 
@@ -1026,44 +980,13 @@ private fun Tag.filterValue(): String = "$TAG_PREFIX$id"
 
 private fun String.selectedTagId(): Long? = if (startsWith(TAG_PREFIX)) removePrefix(TAG_PREFIX).toLongOrNull() else null
 
-private fun String.labelFor(selectedTag: Tag?): String = when {
-    selectedTag != null -> "# ${selectedTag.name}"
-    else -> this
+private fun String.labelFor(selectedTag: Tag?): String = when (this) {
+    FILTER_ARCHIVED -> FILTER_ARCHIVED
+    FILTER_DELETED -> FILTER_DELETED
+    else -> if (selectedTag != null) "# ${selectedTag.name}" else this
 }
 
 private fun Set<Long>.toggle(id: Long): Set<Long> = if (id in this) this - id else this + id
-
-private fun String.nextMainFilter(): String {
-    val index = MAIN_FILTERS.indexOf(this)
-    return if (index >= 0 && index < MAIN_FILTERS.lastIndex) MAIN_FILTERS[index + 1] else FILTER_ALL
-}
-
-private fun String.previousMainFilter(): String {
-    val index = MAIN_FILTERS.indexOf(this)
-    return if (index > 0) MAIN_FILTERS[index - 1] else FILTER_ALL
-}
-
-private fun Modifier.swipeToSwitchFilters(
-    enabled: Boolean,
-    onSwipeLeft: () -> Unit,
-    onSwipeRight: () -> Unit,
-): Modifier {
-    if (!enabled) return this
-    return pointerInput(Unit) {
-        var dragAmountTotal = 0f
-        detectHorizontalDragGestures(
-            onDragEnd = {
-                when {
-                    dragAmountTotal < -90f -> onSwipeLeft()
-                    dragAmountTotal > 90f -> onSwipeRight()
-                }
-                dragAmountTotal = 0f
-            },
-            onDragCancel = { dragAmountTotal = 0f },
-            onHorizontalDrag = { _, dragAmount -> dragAmountTotal += dragAmount },
-        )
-    }
-}
 
 private fun List<Note>.filteredAndSortedBy(query: String): List<Note> {
     val normalizedQuery = query.trim().lowercase()
@@ -1095,3 +1018,5 @@ private fun Note.searchScore(query: String): Int? {
 private fun defaultNoteComparator(): Comparator<Note> = compareByDescending<Note> { it.pinned }
     .thenByDescending { it.updatedAt }
     .thenByDescending { it.id }
+
+private fun colorFromHex(hex: String, fallback: Color): Color = runCatching { Color(AndroidColor.parseColor(hex)) }.getOrDefault(fallback)
