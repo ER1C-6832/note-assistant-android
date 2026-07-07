@@ -1,0 +1,78 @@
+package com.er1cmo.noteassistant.assistant.runtime.state
+
+enum class AssistantPhase(val storageValue: String) {
+    Idle("idle"),
+    Disabled("disabled"),
+    Activating("activating"),
+    Connecting("connecting"),
+    Connected("connected"),
+    Listening("listening"),
+    UploadingAudio("uploading_audio"),
+    Thinking("thinking"),
+    Speaking("speaking"),
+    Reconnecting("reconnecting"),
+    Error("error"),
+}
+
+enum class AssistantConnectionStatus(val storageValue: String) {
+    Disconnected("disconnected"),
+    Connecting("connecting"),
+    Connected("connected"),
+    Closing("closing"),
+}
+
+enum class AssistantActivationStatus(val storageValue: String) {
+    Unknown("unknown"),
+    Required("required"),
+    Activating("activating"),
+    Activated("activated"),
+    Failed("failed"),
+}
+
+enum class AssistantAudioStatus(val storageValue: String) {
+    Idle("idle"),
+    Recording("recording"),
+    Playing("playing"),
+    Error("error"),
+}
+
+data class AssistantState(
+    val phase: AssistantPhase = AssistantPhase.Disabled,
+    val connection: AssistantConnectionStatus = AssistantConnectionStatus.Disconnected,
+    val activation: AssistantActivationStatus = AssistantActivationStatus.Unknown,
+    val audio: AssistantAudioStatus = AssistantAudioStatus.Idle,
+    val statusText: String = "助手未启用",
+    val errorMessage: String? = null,
+    val lastUserText: String? = null,
+    val lastAssistantText: String? = null,
+    val lastEventAt: Long? = null,
+    val sessionId: String? = null,
+    val reconnectAttempt: Int = 0,
+    val assistantEnabled: Boolean = false,
+    val fakeRuntime: Boolean = true,
+) {
+    val isConnected: Boolean
+        get() = connection == AssistantConnectionStatus.Connected && sessionId != null
+
+    companion object {
+        fun disabled(nowMillis: Long? = null): AssistantState = AssistantState(
+            phase = AssistantPhase.Disabled,
+            connection = AssistantConnectionStatus.Disconnected,
+            activation = AssistantActivationStatus.Unknown,
+            audio = AssistantAudioStatus.Idle,
+            statusText = "助手已关闭",
+            lastEventAt = nowMillis,
+            assistantEnabled = false,
+        )
+
+        fun idle(nowMillis: Long? = null): AssistantState = AssistantState(
+            phase = AssistantPhase.Idle,
+            connection = AssistantConnectionStatus.Disconnected,
+            activation = AssistantActivationStatus.Unknown,
+            audio = AssistantAudioStatus.Idle,
+            statusText = "助手已启用，等待连接",
+            lastEventAt = nowMillis,
+            assistantEnabled = true,
+        )
+    }
+}

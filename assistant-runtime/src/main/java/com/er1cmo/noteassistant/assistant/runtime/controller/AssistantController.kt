@@ -1,21 +1,17 @@
 package com.er1cmo.noteassistant.assistant.runtime.controller
 
-import kotlinx.coroutines.flow.MutableStateFlow
+import com.er1cmo.noteassistant.assistant.runtime.state.AssistantState
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
-import javax.inject.Inject
-import javax.inject.Singleton
 
-@Singleton
-class AssistantController @Inject constructor() {
-    private val _state = MutableStateFlow(AssistantState())
-    val state: StateFlow<AssistantState> = _state.asStateFlow()
+interface AssistantController {
+    val state: StateFlow<AssistantState>
 
-    fun markListening() {
-        _state.value = AssistantState(AssistantPhase.Listening, "正在聆听")
-    }
-
-    fun markConnected() {
-        _state.value = AssistantState(AssistantPhase.Connected, "已连接")
-    }
+    suspend fun enableAssistant()
+    suspend fun disableAssistant()
+    suspend fun connect()
+    suspend fun disconnect(reason: String = "user_close")
+    suspend fun sendText(text: String)
+    suspend fun startPushToTalk(hasRecordAudioPermission: Boolean)
+    suspend fun stopPushToTalk()
+    suspend fun simulateIncomingToolCall(toolName: String, argumentsJson: String = "{}")
 }

@@ -30,5 +30,9 @@ kapt {
 dependencies {
     implementation(libs.hilt.android)
     kapt(libs.hilt.compiler)
+    implementation(project(":core-common"))
+    implementation(project(":app-settings"))
     implementation(libs.kotlinx.coroutines.android)
+
+    testImplementation(libs.junit)
 }
