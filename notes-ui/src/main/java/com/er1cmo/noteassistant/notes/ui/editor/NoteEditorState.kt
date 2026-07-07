@@ -10,6 +10,7 @@ data class NoteEditorState(
     val tagText: String = "",
     val type: NoteType = NoteType.Normal,
     val color: String = NoteColorPalette.default.hex,
+    val pinned: Boolean = false,
     val isLoading: Boolean = false,
     val isSaving: Boolean = false,
     val saved: Boolean = false,

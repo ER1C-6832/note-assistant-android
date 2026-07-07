@@ -41,6 +41,7 @@ class NoteEditorViewModel @Inject constructor(
                         tagText = note.tags.joinToString("、") { it.name },
                         type = note.type,
                         color = note.color ?: NoteEditorState().color,
+                        pinned = note.pinned,
                         isLoading = false,
                     )
                 } else {
@@ -70,19 +71,26 @@ class NoteEditorViewModel @Inject constructor(
         _state.update { it.copy(color = color, saved = false) }
     }
 
+    fun updatePinned(pinned: Boolean) {
+        _state.update { it.copy(pinned = pinned, saved = false) }
+    }
+
     fun save() {
         val current = _state.value
         if (current.isSaving || current.title.isBlank() && current.content.isBlank()) return
         viewModelScope.launch {
             _state.update { it.copy(isSaving = true) }
             if (current.noteId == null) {
-                noteUseCases.createNote(
+                val createdId = noteUseCases.createNote(
                     title = current.title,
                     content = current.content,
                     type = current.type,
                     color = current.color,
                     tagText = current.tagText,
                 )
+                if (current.pinned) {
+                    noteUseCases.setNotePinned(createdId, true)
+                }
             } else {
                 noteUseCases.updateNote(
                     id = current.noteId,
@@ -92,6 +100,7 @@ class NoteEditorViewModel @Inject constructor(
                     color = current.color,
                     tagText = current.tagText,
                 )
+                noteUseCases.setNotePinned(current.noteId, current.pinned)
             }
             _state.update { it.copy(isSaving = false, saved = true) }
         }

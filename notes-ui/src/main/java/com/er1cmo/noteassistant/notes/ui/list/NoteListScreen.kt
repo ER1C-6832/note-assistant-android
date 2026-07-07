@@ -24,7 +24,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -404,14 +403,13 @@ private fun TagDrawer(
         Column(
             modifier = Modifier
                 .fillMaxHeight()
-                .verticalScroll(rememberScrollState())
                 .padding(start = 20.dp, end = 18.dp, top = 50.dp, bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Text("标签与筛选", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold, color = Color(0xFF3A2D16))
             Text("选择范围后返回列表", style = MaterialTheme.typography.bodySmall, color = Color(0xFF8A7651))
             Spacer(Modifier.height(8.dp))
-            listOf(FILTER_ALL, FILTER_TODO, FILTER_DONE, FILTER_PINNED).forEach { item ->
+            listOf(FILTER_ALL, FILTER_PINNED, FILTER_TODO, FILTER_DONE).forEach { item ->
                 TagDrawerRow(
                     text = item,
                     selected = selectedFilter == item,
@@ -446,61 +444,67 @@ private fun TagDrawer(
                 Text("创建标签")
             }
 
+            Text("已创建标签", style = MaterialTheme.typography.labelLarge, color = Color(0xFF8A7651))
             if (tags.isEmpty()) {
                 Text("暂无标签。", style = MaterialTheme.typography.bodySmall, color = Color(0xFF9A8A70))
             } else {
-                tags.forEach { tag ->
-                    if (editingTagId == tag.id) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .background(Color.White.copy(alpha = 0.5f), RoundedCornerShape(16.dp))
-                                .padding(10.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            OutlinedTextField(
-                                value = editingName,
-                                onValueChange = { editingName = it },
-                                label = { Text("重命名") },
-                                singleLine = true,
-                                modifier = Modifier.fillMaxWidth(),
-                            )
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Surface(
-                                    onClick = {
-                                        val name = editingName.trim()
-                                        if (name.isNotEmpty()) onRenameTag(tag.id, name)
-                                        editingTagId = null
-                                        editingName = ""
-                                    },
-                                    shape = RoundedCornerShape(12.dp),
-                                    color = Color(0xFFFFD978),
-                                ) {
-                                    Text("保存", modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp), color = Color(0xFF3A2A08))
-                                }
-                                Surface(
-                                    onClick = {
-                                        editingTagId = null
-                                        editingName = ""
-                                    },
-                                    shape = RoundedCornerShape(12.dp),
-                                    color = Color.White.copy(alpha = 0.72f),
-                                ) {
-                                    Text("取消", modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp), color = Color(0xFF4A3A20))
+                LazyColumn(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    items(tags, key = { it.id }) { tag ->
+                        if (editingTagId == tag.id) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .background(Color.White.copy(alpha = 0.5f), RoundedCornerShape(16.dp))
+                                    .padding(10.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                OutlinedTextField(
+                                    value = editingName,
+                                    onValueChange = { editingName = it },
+                                    label = { Text("重命名") },
+                                    singleLine = true,
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Surface(
+                                        onClick = {
+                                            val name = editingName.trim()
+                                            if (name.isNotEmpty()) onRenameTag(tag.id, name)
+                                            editingTagId = null
+                                            editingName = ""
+                                        },
+                                        shape = RoundedCornerShape(12.dp),
+                                        color = Color(0xFFFFD978),
+                                    ) {
+                                        Text("保存", modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp), color = Color(0xFF3A2A08))
+                                    }
+                                    Surface(
+                                        onClick = {
+                                            editingTagId = null
+                                            editingName = ""
+                                        },
+                                        shape = RoundedCornerShape(12.dp),
+                                        color = Color.White.copy(alpha = 0.72f),
+                                    ) {
+                                        Text("取消", modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp), color = Color(0xFF4A3A20))
+                                    }
                                 }
                             }
+                        } else {
+                            TagManageRow(
+                                tag = tag,
+                                selected = selectedFilter == tag.filterValue(),
+                                onSelect = { onFilterSelected(tag.filterValue()) },
+                                onRename = {
+                                    editingTagId = tag.id
+                                    editingName = tag.name
+                                },
+                                onDelete = { deleteConfirmTag = tag },
+                            )
                         }
-                    } else {
-                        TagManageRow(
-                            tag = tag,
-                            selected = selectedFilter == tag.filterValue(),
-                            onSelect = { onFilterSelected(tag.filterValue()) },
-                            onRename = {
-                                editingTagId = tag.id
-                                editingName = tag.name
-                            },
-                            onDelete = { deleteConfirmTag = tag },
-                        )
                     }
                 }
             }

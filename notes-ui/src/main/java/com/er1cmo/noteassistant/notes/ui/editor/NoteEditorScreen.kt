@@ -48,6 +48,7 @@ fun NoteEditorRoute(
         onTagTextChange = viewModel::updateTagText,
         onTypeChange = viewModel::updateType,
         onColorChange = viewModel::updateColor,
+        onPinnedChange = viewModel::updatePinned,
         onSaveClick = viewModel::save,
         onBackClick = onBackClick,
     )
@@ -61,6 +62,7 @@ fun NoteEditorScreen(
     onTagTextChange: (String) -> Unit,
     onTypeChange: (NoteType) -> Unit,
     onColorChange: (String) -> Unit,
+    onPinnedChange: (Boolean) -> Unit,
     onSaveClick: () -> Unit,
     onBackClick: () -> Unit,
 ) {
@@ -79,7 +81,7 @@ fun NoteEditorScreen(
                         fontWeight = FontWeight.SemiBold,
                         color = Color(0xFF222832),
                     )
-                    Text("标题、正文、标签、类型和颜色", style = MaterialTheme.typography.bodySmall, color = Color(0xFF7A7280))
+                    Text("标题、正文、标签、类型、置顶和颜色", style = MaterialTheme.typography.bodySmall, color = Color(0xFF7A7280))
                 }
                 OutlinedButton(onClick = onBackClick, shape = RoundedCornerShape(16.dp)) { Text("返回") }
             }
@@ -130,6 +132,20 @@ fun NoteEditorScreen(
                         selected = state.type == NoteType.Todo,
                         onClick = { onTypeChange(NoteType.Todo) },
                         label = { Text("待办便签") },
+                    )
+                }
+
+                Text("列表位置", style = MaterialTheme.typography.labelLarge, color = Color(0xFF6B5F4A))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(
+                        selected = !state.pinned,
+                        onClick = { onPinnedChange(false) },
+                        label = { Text("不置顶") },
+                    )
+                    FilterChip(
+                        selected = state.pinned,
+                        onClick = { onPinnedChange(true) },
+                        label = { Text("置顶") },
                     )
                 }
 

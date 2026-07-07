@@ -37,6 +37,7 @@ fun NoteCard(
     val cardColor = NoteColorPalette.colorFor(note.color)
     val isTodo = note.type == NoteType.Todo
     val contentAlpha = if (note.isDone) 0.58f else 1f
+    val doneDecoration = if (note.isDone) TextDecoration.LineThrough else TextDecoration.None
 
     Column(
         modifier = modifier
@@ -60,7 +61,7 @@ fun NoteCard(
                 modifier = Modifier.weight(1f),
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
-                textDecoration = if (note.isDone) TextDecoration.LineThrough else TextDecoration.None,
+                textDecoration = doneDecoration,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 color = Color(0xFF20242C),
@@ -76,6 +77,7 @@ fun NoteCard(
         Text(
             text = note.content.ifBlank { "暂无正文" },
             style = MaterialTheme.typography.bodyMedium,
+            textDecoration = doneDecoration,
             color = Color(0xFF404756),
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
@@ -86,7 +88,7 @@ fun NoteCard(
             }
             Spacer(Modifier.weight(1f))
             Text(
-                text = if (note.deleted) "最近删除" else "已保存",
+                text = if (note.deleted) "最近删除" else "刚刚更新",
                 style = MaterialTheme.typography.labelSmall,
                 color = Color(0xFF8A8490),
             )
