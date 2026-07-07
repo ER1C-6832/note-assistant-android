@@ -1,14 +1,18 @@
 package com.er1cmo.noteassistant.notes.ui.components
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.border
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
@@ -27,29 +31,42 @@ import androidx.compose.ui.unit.dp
 import com.er1cmo.noteassistant.notes.domain.model.Note
 import com.er1cmo.noteassistant.notes.domain.model.NoteType
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun NoteCard(
     note: Note,
     onClick: () -> Unit,
     onTodoCheckedChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
+    selectionMode: Boolean = false,
+    selected: Boolean = false,
+    onLongClick: () -> Unit = {},
 ) {
     val cardColor = NoteColorPalette.colorFor(note.color)
     val isTodo = note.type == NoteType.Todo
     val contentAlpha = if (note.isDone) 0.58f else 1f
     val doneDecoration = if (note.isDone) TextDecoration.LineThrough else TextDecoration.None
+    val cardShape = RoundedCornerShape(24.dp)
 
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .background(cardColor, RoundedCornerShape(24.dp))
-            .clickable(onClick = onClick)
+            .background(cardColor, cardShape)
+            .then(
+                if (selected) Modifier.border(2.dp, Color(0xFF3D6BFF), cardShape) else Modifier,
+            )
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = onLongClick,
+            )
             .padding(16.dp)
             .alpha(contentAlpha),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            if (isTodo) {
+            if (selectionMode) {
+                SelectionDot(selected = selected)
+            } else if (isTodo) {
                 Checkbox(
                     checked = note.isDone,
                     onCheckedChange = onTodoCheckedChange,
@@ -92,6 +109,22 @@ fun NoteCard(
                 style = MaterialTheme.typography.labelSmall,
                 color = Color(0xFF8A8490),
             )
+        }
+    }
+}
+
+@Composable
+private fun SelectionDot(selected: Boolean) {
+    Box(
+        modifier = Modifier
+            .padding(end = 8.dp)
+            .size(24.dp)
+            .background(if (selected) Color(0xFF3D6BFF) else Color.White.copy(alpha = 0.86f), CircleShape)
+            .border(1.dp, if (selected) Color(0xFF3D6BFF) else Color(0xFF9CA3AF), CircleShape),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (selected) {
+            Text("✓", color = Color.White, style = MaterialTheme.typography.labelMedium)
         }
     }
 }
