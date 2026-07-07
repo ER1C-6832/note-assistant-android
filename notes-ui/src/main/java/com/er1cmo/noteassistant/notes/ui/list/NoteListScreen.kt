@@ -31,6 +31,7 @@ import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -48,6 +49,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.er1cmo.noteassistant.notes.domain.model.Note
 import com.er1cmo.noteassistant.notes.domain.model.NoteType
 import com.er1cmo.noteassistant.notes.domain.model.Tag
 import com.er1cmo.noteassistant.notes.ui.R
@@ -95,19 +97,26 @@ fun NoteListScreen(
 ) {
     var tagPanelOpen by remember { mutableStateOf(false) }
     var selectedFilter by remember { mutableStateOf(FILTER_ALL) }
+    var searchQuery by remember { mutableStateOf("") }
+
     val selectedTag = remember(state.tags, selectedFilter) {
         selectedFilter.selectedTagId()?.let { id -> state.tags.firstOrNull { it.id == id } }
     }
     val selectedCreateTag = selectedTag?.name
-    val displayNotes = remember(state.notes, state.deletedNotes, selectedFilter, selectedTag) {
+    val baseNotes = remember(state.notes, state.deletedNotes, selectedFilter, selectedTag) {
         when {
             selectedFilter == FILTER_DELETED -> state.deletedNotes
             selectedFilter == FILTER_TODO -> state.notes.filter { it.type == NoteType.Todo && !it.isDone }
             selectedFilter == FILTER_DONE -> state.notes.filter { it.type == NoteType.Todo && it.isDone }
             selectedFilter == FILTER_PINNED -> state.notes.filter { it.pinned }
-            selectedTag != null -> state.notes.filter { note -> note.tags.any { it.id == selectedTag.id || it.normalizedName == selectedTag.normalizedName } }
+            selectedTag != null -> state.notes.filter { note ->
+                note.tags.any { it.id == selectedTag.id || it.normalizedName == selectedTag.normalizedName }
+            }
             else -> state.notes
         }
+    }
+    val displayNotes = remember(baseNotes, searchQuery) {
+        baseNotes.searchBy(searchQuery)
     }
 
     BackHandler(enabled = tagPanelOpen) {
@@ -123,17 +132,27 @@ fun NoteListScreen(
                 verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
                 HeaderBar(onSettingsClick = onSettingsClick)
-                SearchBox()
+                SearchBox(
+                    query = searchQuery,
+                    onQueryChange = { searchQuery = it },
+                )
                 FilterBar(
                     selectedFilter = selectedFilter,
                     onTagPanelClick = { tagPanelOpen = true },
                     onFilterSelected = { selectedFilter = it },
+                )
+                SearchResultSummary(
+                    query = searchQuery,
+                    selectedTagName = selectedCreateTag,
+                    resultCount = displayNotes.size,
+                    onClearQuery = { searchQuery = "" },
                 )
 
                 if (displayNotes.isEmpty()) {
                     EmptyNotes(
                         selectedFilter = selectedFilter,
                         selectedTagName = selectedCreateTag,
+                        searchQuery = searchQuery,
                         onCreateClick = { onCreateClick(selectedCreateTag) },
                     )
                 } else {
@@ -281,16 +300,39 @@ private fun RingLogo(size: Int) {
 }
 
 @Composable
-private fun SearchBox() {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(Color(0xFFF6F7FB), RoundedCornerShape(22.dp))
-            .padding(horizontal = 16.dp, vertical = 14.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text("⌕  搜索标题、正文或标签", color = Color(0xFF7D8190), style = MaterialTheme.typography.bodyMedium)
-    }
+private fun SearchBox(query: String, onQueryChange: (String) -> Unit) {
+    OutlinedTextField(
+        value = query,
+        onValueChange = onQueryChange,
+        modifier = Modifier.fillMaxWidth(),
+        singleLine = true,
+        shape = RoundedCornerShape(22.dp),
+        placeholder = {
+            Text("搜索标题、正文或标签", color = Color(0xFF7D8190))
+        },
+        leadingIcon = {
+            Text("⌕", color = Color(0xFF7D8190), style = MaterialTheme.typography.bodyMedium)
+        },
+        trailingIcon = if (query.isNotBlank()) {
+            {
+                Text(
+                    text = "清除",
+                    modifier = Modifier.clickable(onClick = { onQueryChange("") }),
+                    color = Color(0xFF3D6BFF),
+                    style = MaterialTheme.typography.labelMedium,
+                )
+            }
+        } else {
+            null
+        },
+        colors = OutlinedTextFieldDefaults.colors(
+            focusedBorderColor = Color.Transparent,
+            unfocusedBorderColor = Color.Transparent,
+            focusedContainerColor = Color(0xFFF6F7FB),
+            unfocusedContainerColor = Color(0xFFF6F7FB),
+            cursorColor = Color(0xFF3D6BFF),
+        ),
+    )
 }
 
 @Composable
@@ -348,7 +390,49 @@ private fun FilterPill(text: String, selected: Boolean, onClick: () -> Unit) {
 }
 
 @Composable
-private fun EmptyNotes(selectedFilter: String, selectedTagName: String?, onCreateClick: () -> Unit) {
+private fun SearchResultSummary(
+    query: String,
+    selectedTagName: String?,
+    resultCount: Int,
+    onClearQuery: () -> Unit,
+) {
+    val trimmedQuery = query.trim()
+    if (trimmedQuery.isBlank() && selectedTagName == null) return
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(Color(0xFFF8FAFF), RoundedCornerShape(18.dp))
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        val scopeText = selectedTagName?.let { "# $it" } ?: "当前列表"
+        val queryText = if (trimmedQuery.isBlank()) "" else " · 关键词：$trimmedQuery"
+        Text(
+            text = "$scopeText$queryText · $resultCount 条",
+            modifier = Modifier.weight(1f),
+            color = Color(0xFF596074),
+            style = MaterialTheme.typography.bodySmall,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        if (trimmedQuery.isNotBlank()) {
+            Text(
+                text = "清除",
+                modifier = Modifier.clickable(onClick = onClearQuery),
+                color = Color(0xFF3D6BFF),
+                style = MaterialTheme.typography.labelMedium,
+            )
+        }
+    }
+}
+
+@Composable
+private fun EmptyNotes(
+    selectedFilter: String,
+    selectedTagName: String?,
+    searchQuery: String,
+    onCreateClick: () -> Unit,
+) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -356,12 +440,15 @@ private fun EmptyNotes(selectedFilter: String, selectedTagName: String?, onCreat
             .padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
+        val hasQuery = searchQuery.trim().isNotEmpty()
         val title = when {
+            hasQuery -> "没有找到相关便签"
             selectedFilter == FILTER_DELETED -> "最近删除为空"
             selectedTagName != null -> "# $selectedTagName 下还没有便签"
             else -> "还没有便签"
         }
         val description = when {
+            hasQuery -> "可以删减关键词，或新建一条更容易找到的便签。"
             selectedFilter == FILTER_DELETED -> "软删除的便签会出现在这里。"
             selectedTagName != null -> "新建便签会自动带上这个标签。"
             else -> "先记下一条想法、待办或临时信息。"
@@ -596,6 +683,33 @@ private fun TagManageRow(
                 style = MaterialTheme.typography.labelMedium,
             )
         }
+    }
+}
+
+private fun List<Note>.searchBy(query: String): List<Note> {
+    val normalizedQuery = query.trim().lowercase()
+    if (normalizedQuery.isBlank()) return this
+    return mapNotNull { note ->
+        note.searchRank(normalizedQuery)?.let { rank -> rank to note }
+    }.sortedWith(
+        compareBy<Pair<Int, Note>> { it.first }
+            .thenByDescending { it.second.pinned }
+            .thenByDescending { it.second.updatedAt }
+            .thenByDescending { it.second.id },
+    ).map { it.second }
+}
+
+private fun Note.searchRank(normalizedQuery: String): Int? {
+    val titleText = title.lowercase()
+    val contentText = content.lowercase()
+    val tagTexts = tags.map { it.name.lowercase() }
+    return when {
+        titleText == normalizedQuery -> 0
+        titleText.contains(normalizedQuery) -> 1
+        tagTexts.any { it == normalizedQuery } -> 2
+        tagTexts.any { it.contains(normalizedQuery) } -> 3
+        contentText.contains(normalizedQuery) -> 4
+        else -> null
     }
 }
 
