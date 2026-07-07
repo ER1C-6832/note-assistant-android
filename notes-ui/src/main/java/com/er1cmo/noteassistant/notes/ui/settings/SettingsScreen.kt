@@ -2,6 +2,7 @@ package com.er1cmo.noteassistant.notes.ui.settings
 
 import android.graphics.Color as AndroidColor
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -11,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
@@ -42,7 +44,11 @@ fun SettingsRoute(
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsState()
-    Surface(color = colorFromHex(state.homeBackgroundColor), modifier = Modifier.fillMaxSize()) {
+    val background = colorFromHex(state.homeBackgroundColor)
+    val dark = state.homeBackgroundColor.isDarkHex()
+    val titleColor = if (dark) Color.White else Color(0xFF111827)
+    val subColor = if (dark) Color(0xFFD0D5DD) else Color(0xFF697386)
+    Surface(color = background, modifier = Modifier.fillMaxSize()) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -51,14 +57,14 @@ fun SettingsRoute(
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text("小泓便签", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                    Text("设置与调试", style = MaterialTheme.typography.bodySmall, color = Color(0xFF697386))
+                    Text("小泓便签", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, color = titleColor)
+                    Text("设置与调试", style = MaterialTheme.typography.bodySmall, color = subColor)
                 }
                 StatusPill(text = "已连接")
             }
             SettingBox("WebSocket 地址", "wss://example.invalid/xiaozhi")
             SettingBox("语音助手状态", "Phase 3 接入真实小智服务")
-            SettingBox("搜索模式", "标题 / 正文 / 标签即时筛选")
+            SettingBox("搜索模式", "标题 / 正文 / 标签 / 拼音即时筛选")
             SettingBox("数据库", "本地 SQLite note_assistant.db")
             ColorSettingBox(
                 label = "主界面背景",
@@ -111,6 +117,8 @@ private val homeBackgroundOptions = listOf(
     ColorOption("米白", "#FFFDF7"),
     ColorOption("暖杏", "#F8F3EA"),
     ColorOption("浅蓝", "#F3F6FB"),
+    ColorOption("深色", "#111827"),
+    ColorOption("黑色", "#000000"),
 )
 
 private val tagDrawerBackgroundOptions = listOf(
@@ -118,6 +126,8 @@ private val tagDrawerBackgroundOptions = listOf(
     ColorOption("米白", "#FFFDF7"),
     ColorOption("浅蓝", "#E7F0FF"),
     ColorOption("浅绿", "#E4F6EC"),
+    ColorOption("深色", "#111827"),
+    ColorOption("黑色", "#000000"),
 )
 
 private data class ColorOption(val name: String, val hex: String)
@@ -132,7 +142,7 @@ private fun SettingBox(label: String, value: String) {
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Text(label, color = Color(0xFF9AA3B2), style = MaterialTheme.typography.bodyMedium)
-        Text(value, style = MaterialTheme.typography.bodyLarge)
+        Text(value, style = MaterialTheme.typography.bodyLarge, color = Color(0xFF111827))
     }
 }
 
@@ -151,7 +161,7 @@ private fun ColorSettingBox(
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Text(label, color = Color(0xFF9AA3B2), style = MaterialTheme.typography.bodyMedium)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(modifier = Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             options.forEach { option ->
                 Surface(
                     onClick = { onSelect(option.hex) },
@@ -164,11 +174,7 @@ private fun ColorSettingBox(
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .size(14.dp)
-                                .background(colorFromHex(option.hex), CircleShape),
-                        )
+                        Box(modifier = Modifier.size(14.dp).background(colorFromHex(option.hex), CircleShape))
                         Text(option.name, style = MaterialTheme.typography.labelMedium, color = Color(0xFF344054))
                     }
                 }
@@ -178,3 +184,11 @@ private fun ColorSettingBox(
 }
 
 private fun colorFromHex(hex: String): Color = runCatching { Color(AndroidColor.parseColor(hex)) }.getOrDefault(Color.White)
+
+private fun String.isDarkHex(): Boolean = runCatching {
+    val color = AndroidColor.parseColor(this)
+    val r = AndroidColor.red(color)
+    val g = AndroidColor.green(color)
+    val b = AndroidColor.blue(color)
+    (0.299 * r + 0.587 * g + 0.114 * b) < 110.0
+}.getOrDefault(false)

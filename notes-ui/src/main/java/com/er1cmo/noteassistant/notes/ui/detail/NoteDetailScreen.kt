@@ -62,6 +62,7 @@ fun NoteDetailRoute(
         onTypeChange = viewModel::changeType,
         onToggleDone = viewModel::toggleDone,
         onTogglePinned = viewModel::togglePinned,
+        onToggleArchived = viewModel::toggleArchived,
         onDeleteClick = viewModel::softDelete,
         onRestoreClick = viewModel::restore,
         onPermanentDeleteClick = viewModel::permanentlyDelete,
@@ -80,6 +81,7 @@ fun NoteDetailScreen(
     onTypeChange: (NoteType) -> Unit,
     onToggleDone: () -> Unit,
     onTogglePinned: () -> Unit,
+    onToggleArchived: () -> Unit,
     onDeleteClick: () -> Unit,
     onRestoreClick: () -> Unit,
     onPermanentDeleteClick: () -> Unit,
@@ -95,11 +97,7 @@ fun NoteDetailScreen(
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Surface(
-                    onClick = onBackClick,
-                    shape = RoundedCornerShape(16.dp),
-                    color = Color(0xFFF4F5F7),
-                ) {
+                Surface(onClick = onBackClick, shape = RoundedCornerShape(16.dp), color = Color(0xFFF4F5F7)) {
                     Text(
                         text = "返回",
                         modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
@@ -129,20 +127,17 @@ fun NoteDetailScreen(
                             enabled = !state.isSaving,
                             shape = RoundedCornerShape(18.dp),
                             modifier = Modifier.fillMaxWidth(),
-                        ) {
-                            Text(if (state.isSaving) "保存中……" else "保存内容")
-                        }
+                        ) { Text(if (state.isSaving) "保存中……" else "保存内容") }
                     }
                     ActionArea(
                         note = state.note,
                         onTypeChange = onTypeChange,
                         onToggleDone = onToggleDone,
                         onTogglePinned = onTogglePinned,
+                        onToggleArchived = onToggleArchived,
                         onDeleteClick = onDeleteClick,
                         onRestoreClick = onRestoreClick,
-                        onCopyClick = {
-                            clipboard.setText(AnnotatedString(state.note.toCopyText()))
-                        },
+                        onCopyClick = { clipboard.setText(AnnotatedString(state.note.toCopyText())) },
                         onPermanentDeleteClick = { showPermanentDeleteDialog = true },
                         onColorClick = { onColorClick(state.note.id) },
                     )
@@ -164,9 +159,7 @@ fun NoteDetailScreen(
                         onPermanentDeleteClick()
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626)),
-                ) {
-                    Text("彻底删除")
-                }
+                ) { Text("彻底删除") }
             },
             dismissButton = {
                 Surface(onClick = { showPermanentDeleteDialog = false }, shape = RoundedCornerShape(12.dp), color = Color(0xFFF4F5F7)) {
@@ -210,16 +203,13 @@ private fun DetailEditorCard(
                 readOnly = readOnly,
                 singleLine = false,
             )
-            if (note.pinned) {
-                Text("置顶", style = MaterialTheme.typography.labelMedium, color = Color(0xFF7C5C00))
+            when {
+                note.deleted -> Text("最近删除", style = MaterialTheme.typography.labelMedium, color = Color(0xFFB42318))
+                note.archived -> Text("已归档", style = MaterialTheme.typography.labelMedium, color = Color(0xFF475467))
+                note.pinned -> Text("置顶", style = MaterialTheme.typography.labelMedium, color = Color(0xFF7C5C00))
             }
         }
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(1.dp)
-                .background(Color(0x1F000000)),
-        )
+        Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(Color(0x1F000000)))
         InlineTextField(
             value = content,
             onValueChange = onContentChange,
@@ -229,11 +219,7 @@ private fun DetailEditorCard(
             readOnly = readOnly,
             minHeight = 160,
         )
-        InlineTagField(
-            value = tagText,
-            readOnly = readOnly,
-            onValueChange = onTagTextChange,
-        )
+        InlineTagField(value = tagText, readOnly = readOnly, onValueChange = onTagTextChange)
     }
 }
 
@@ -257,9 +243,7 @@ private fun InlineTextField(
             readOnly = readOnly,
             modifier = Modifier.fillMaxWidth(),
             decorationBox = { innerTextField ->
-                if (value.isBlank()) {
-                    Text(placeholder, style = textStyle, color = Color(0x88404756))
-                }
+                if (value.isBlank()) Text(placeholder, style = textStyle, color = Color(0x88404756))
                 innerTextField()
             },
         )
@@ -279,9 +263,7 @@ private fun InlineTagField(value: String, readOnly: Boolean, onValueChange: (Str
             readOnly = readOnly,
             modifier = Modifier.weight(1f),
             decorationBox = { innerTextField ->
-                if (value.isBlank()) {
-                    Text("标签", style = MaterialTheme.typography.bodyMedium, color = Color(0x885C6372))
-                }
+                if (value.isBlank()) Text("标签", style = MaterialTheme.typography.bodyMedium, color = Color(0x885C6372))
                 innerTextField()
             },
         )
@@ -294,6 +276,7 @@ private fun ActionArea(
     onTypeChange: (NoteType) -> Unit,
     onToggleDone: () -> Unit,
     onTogglePinned: () -> Unit,
+    onToggleArchived: () -> Unit,
     onDeleteClick: () -> Unit,
     onRestoreClick: () -> Unit,
     onCopyClick: () -> Unit,
@@ -314,45 +297,26 @@ private fun ActionArea(
             )
         } else {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                TypePill(
-                    text = "普通便签",
-                    selected = note.type == NoteType.Normal,
-                    modifier = Modifier.weight(1f),
-                    onClick = { onTypeChange(NoteType.Normal) },
-                )
-                TypePill(
-                    text = "待办便签",
-                    selected = note.type == NoteType.Todo,
-                    modifier = Modifier.weight(1f),
-                    onClick = { onTypeChange(NoteType.Todo) },
-                )
+                TypePill(text = "普通便签", selected = note.type == NoteType.Normal, modifier = Modifier.weight(1f), onClick = { onTypeChange(NoteType.Normal) })
+                TypePill(text = "待办便签", selected = note.type == NoteType.Todo, modifier = Modifier.weight(1f), onClick = { onTypeChange(NoteType.Todo) })
             }
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 if (note.type == NoteType.Todo) {
-                    ActionPill(
-                        text = if (note.isDone) "取消完成" else "标记完成",
-                        modifier = Modifier.weight(1f),
-                        onClick = onToggleDone,
-                    )
+                    ActionPill(text = if (note.isDone) "取消完成" else "标记完成", modifier = Modifier.weight(1f), onClick = onToggleDone)
                 }
+                ActionPill(text = if (note.pinned) "取消置顶" else "置顶", modifier = Modifier.weight(1f), onClick = onTogglePinned)
+                ActionPill(text = "改变颜色", modifier = Modifier.weight(1f), onClick = onColorClick)
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                ActionPill(text = if (note.archived) "取消归档" else "归档", modifier = Modifier.weight(1f), onClick = onToggleArchived)
                 ActionPill(
-                    text = if (note.pinned) "取消置顶" else "置顶",
+                    text = "删除便签",
+                    onClick = onDeleteClick,
                     modifier = Modifier.weight(1f),
-                    onClick = onTogglePinned,
-                )
-                ActionPill(
-                    text = "改变颜色",
-                    modifier = Modifier.weight(1f),
-                    onClick = onColorClick,
+                    containerColor = Color(0xFFFFE4E6),
+                    contentColor = Color(0xFFB42318),
                 )
             }
-            ActionPill(
-                text = "删除便签",
-                onClick = onDeleteClick,
-                modifier = Modifier.fillMaxWidth(),
-                containerColor = Color(0xFFFFE4E6),
-                contentColor = Color(0xFFB42318),
-            )
         }
     }
 }
@@ -362,63 +326,36 @@ private fun TypePill(text: String, selected: Boolean, modifier: Modifier = Modif
     Surface(
         onClick = onClick,
         shape = RoundedCornerShape(18.dp),
-        color = if (selected) Color(0xFFE9D8FF) else Color.White,
-        border = androidx.compose.foundation.BorderStroke(1.dp, if (selected) Color.Transparent else Color(0xFF9BA1AE)),
+        color = if (selected) Color(0xFFEDE0FF) else Color.White,
+        border = androidx.compose.foundation.BorderStroke(1.dp, if (selected) Color.Transparent else Color(0xFFE5E7EB)),
         modifier = modifier,
     ) {
-        Text(
-            text = text,
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-            style = MaterialTheme.typography.labelLarge,
-            color = Color(0xFF2F3340),
-        )
+        Text(text, modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp), color = Color(0xFF344054), style = MaterialTheme.typography.labelLarge)
     }
 }
 
 @Composable
 private fun ActionPill(
     text: String,
-    modifier: Modifier = Modifier,
-    enabled: Boolean = true,
-    containerColor: Color = Color(0xFFF5F6FA),
-    contentColor: Color = Color(0xFF344054),
     onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    containerColor: Color = Color(0xFFF6F7FB),
+    contentColor: Color = Color(0xFF344054),
 ) {
-    Surface(
-        onClick = { if (enabled) onClick() },
-        shape = RoundedCornerShape(18.dp),
-        color = if (enabled) containerColor else Color(0xFFE5E7EB),
-        modifier = modifier,
-    ) {
-        Text(
-            text = text,
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-            style = MaterialTheme.typography.labelLarge,
-            color = if (enabled) contentColor else Color(0xFF9CA3AF),
-        )
+    Surface(onClick = onClick, shape = RoundedCornerShape(18.dp), color = containerColor, modifier = modifier) {
+        Text(text, modifier = Modifier.padding(horizontal = 14.dp, vertical = 11.dp), color = contentColor, style = MaterialTheme.typography.labelLarge)
     }
 }
 
 @Composable
 private fun StatusBox(text: String) {
-    Text(
-        text = text,
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(Color(0xFFF6F7FB), RoundedCornerShape(24.dp))
-            .padding(18.dp),
-        color = Color(0xFF6B7280),
-    )
+    Box(modifier = Modifier.fillMaxWidth().background(Color(0xFFF6F7FB), RoundedCornerShape(24.dp)).padding(20.dp)) {
+        Text(text, color = Color(0xFF6B7280))
+    }
 }
 
 private fun Note.toCopyText(): String = buildString {
     appendLine(title.ifBlank { "未命名便签" })
-    if (content.isNotBlank()) {
-        appendLine()
-        appendLine(content)
-    }
-    if (tags.isNotEmpty()) {
-        appendLine()
-        append(tags.joinToString(" ") { "#${it.name}" })
-    }
+    if (content.isNotBlank()) appendLine(content)
+    if (tags.isNotEmpty()) append(tags.joinToString("、", prefix = "#"))
 }

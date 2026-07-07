@@ -46,22 +46,17 @@ fun NoteCard(
     val isTodo = note.type == NoteType.Todo
     val contentAlpha = if (note.isDone) 0.58f else 1f
     val doneDecoration = if (note.isDone) TextDecoration.LineThrough else TextDecoration.None
-    val cardShape = RoundedCornerShape(24.dp)
+    val cardShape = RoundedCornerShape(20.dp)
 
     Column(
         modifier = modifier
             .fillMaxWidth()
             .background(cardColor, cardShape)
-            .then(
-                if (selected) Modifier.border(2.dp, Color(0xFF3D6BFF), cardShape) else Modifier,
-            )
-            .combinedClickable(
-                onClick = onClick,
-                onLongClick = onLongClick,
-            )
-            .padding(16.dp)
+            .then(if (selected) Modifier.border(2.dp, Color(0xFF3D6BFF), cardShape) else Modifier)
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
+            .padding(horizontal = 12.dp, vertical = 11.dp)
             .alpha(contentAlpha),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+        verticalArrangement = Arrangement.spacedBy(7.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             if (selectionMode) {
@@ -70,13 +65,13 @@ fun NoteCard(
                 Checkbox(
                     checked = note.isDone,
                     onCheckedChange = onTodoCheckedChange,
-                    modifier = Modifier.size(32.dp),
+                    modifier = Modifier.size(30.dp),
                 )
             }
             Text(
                 text = note.title.ifBlank { "未命名便签" },
                 modifier = Modifier.weight(1f),
-                style = MaterialTheme.typography.titleMedium,
+                style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.SemiBold,
                 textDecoration = doneDecoration,
                 maxLines = 1,
@@ -86,28 +81,33 @@ fun NoteCard(
             if (note.pinned) {
                 Text(
                     text = "置顶",
-                    style = MaterialTheme.typography.labelMedium,
+                    style = MaterialTheme.typography.labelSmall,
                     color = Color(0xFF7C5C00),
                 )
             }
         }
         Text(
             text = note.content.ifBlank { "暂无正文" },
-            style = MaterialTheme.typography.bodyMedium,
+            style = MaterialTheme.typography.bodySmall,
             textDecoration = doneDecoration,
             color = Color(0xFF404756),
-            maxLines = 2,
+            maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            note.tags.take(3).forEach { tag ->
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+            note.tags.take(2).forEach { tag ->
                 SoftChip(text = tag.name)
             }
             Spacer(Modifier.weight(1f))
             Text(
-                text = if (note.deleted) "最近删除" else "刚刚更新",
+                text = when {
+                    note.deleted -> "最近删除"
+                    note.archived -> "已归档"
+                    else -> "刚刚更新"
+                },
                 style = MaterialTheme.typography.labelSmall,
                 color = Color(0xFF8A8490),
+                maxLines = 1,
             )
         }
     }
@@ -118,14 +118,12 @@ private fun SelectionDot(selected: Boolean) {
     Box(
         modifier = Modifier
             .padding(end = 8.dp)
-            .size(24.dp)
+            .size(22.dp)
             .background(if (selected) Color(0xFF3D6BFF) else Color.White.copy(alpha = 0.86f), CircleShape)
             .border(1.dp, if (selected) Color(0xFF3D6BFF) else Color(0xFF9CA3AF), CircleShape),
         contentAlignment = Alignment.Center,
     ) {
-        if (selected) {
-            Text("✓", color = Color.White, style = MaterialTheme.typography.labelMedium)
-        }
+        if (selected) Text("✓", color = Color.White, style = MaterialTheme.typography.labelMedium)
     }
 }
 
@@ -133,7 +131,7 @@ private fun SelectionDot(selected: Boolean) {
 private fun SoftChip(text: String) {
     AssistChip(
         onClick = {},
-        label = { Text(text) },
+        label = { Text(text, maxLines = 1, overflow = TextOverflow.Ellipsis) },
         colors = AssistChipDefaults.assistChipColors(containerColor = Color.White.copy(alpha = 0.62f)),
         border = null,
     )

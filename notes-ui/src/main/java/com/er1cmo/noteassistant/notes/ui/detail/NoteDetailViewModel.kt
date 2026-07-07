@@ -70,12 +70,7 @@ class NoteDetailViewModel @Inject constructor(
                 color = note.color,
                 tagText = current.tagTextInput,
             )
-            val refreshed = noteUseCases.getNote(note.id)
-            if (refreshed != null) {
-                _state.value = refreshed.toState(isSaving = false, message = "已保存")
-            } else {
-                _state.update { it.copy(isSaving = false, message = "便签已不存在") }
-            }
+            refresh(note.id, "已保存")
         }
     }
 
@@ -93,12 +88,7 @@ class NoteDetailViewModel @Inject constructor(
                 color = note.color,
                 tagText = current.tagTextInput,
             )
-            val refreshed = noteUseCases.getNote(note.id)
-            if (refreshed != null) {
-                _state.value = refreshed.toState(isSaving = false, message = "类型已更新")
-            } else {
-                _state.update { it.copy(isSaving = false, message = "便签已不存在") }
-            }
+            refresh(note.id, "类型已更新")
         }
     }
 
@@ -115,6 +105,15 @@ class NoteDetailViewModel @Inject constructor(
         if (note.deleted) return
         viewModelScope.launch {
             noteUseCases.setNotePinned(note.id, !note.pinned)
+        }
+    }
+
+    fun toggleArchived() {
+        val note = _state.value.note ?: return
+        if (note.deleted) return
+        viewModelScope.launch {
+            noteUseCases.setNoteArchived(note.id, !note.archived)
+            refresh(note.id, if (note.archived) "已取消归档" else "已归档")
         }
     }
 
@@ -142,6 +141,15 @@ class NoteDetailViewModel @Inject constructor(
             } else {
                 _state.update { it.copy(message = "彻底删除失败，请重试") }
             }
+        }
+    }
+
+    private suspend fun refresh(noteId: Long, message: String) {
+        val refreshed = noteUseCases.getNote(noteId)
+        if (refreshed != null) {
+            _state.value = refreshed.toState(isSaving = false, message = message)
+        } else {
+            _state.update { it.copy(isSaving = false, message = "便签已不存在") }
         }
     }
 
