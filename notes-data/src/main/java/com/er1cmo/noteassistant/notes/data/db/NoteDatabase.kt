@@ -69,7 +69,6 @@ abstract class NoteDatabase : RoomDatabase() {
                 )
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_note_revisions_note_id ON note_revisions(note_id)")
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_note_revisions_command_log_id ON note_revisions(command_log_id)")
-                db.execSQL("CREATE INDEX IF NOT EXISTS index_note_revisions_created_at ON note_revisions(created_at)")
 
                 db.execSQL(
                     """
@@ -98,12 +97,11 @@ abstract class NoteDatabase : RoomDatabase() {
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_assistant_command_log_created_at ON assistant_command_log(created_at)")
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_assistant_command_log_tool_name ON assistant_command_log(tool_name)")
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_assistant_command_log_status ON assistant_command_log(status)")
-                db.execSQL("CREATE INDEX IF NOT EXISTS index_assistant_command_log_source ON assistant_command_log(source)")
 
                 db.execSQL(
                     """
                     CREATE TABLE IF NOT EXISTS pending_confirmations (
-                        confirmation_id TEXT PRIMARY KEY NOT NULL,
+                        confirmation_id TEXT NOT NULL PRIMARY KEY,
                         command_log_id INTEGER NOT NULL,
                         tool_name TEXT NOT NULL,
                         arguments_json TEXT NOT NULL,

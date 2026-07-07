@@ -25,10 +25,7 @@ object DatabaseModule {
         context,
         NoteDatabase::class.java,
         "note_assistant.db",
-    ).addMigrations(
-        NoteDatabase.MIGRATION_1_2,
-        NoteDatabase.MIGRATION_2_3,
-    ).build()
+    ).addMigrations(NoteDatabase.MIGRATION_1_2, NoteDatabase.MIGRATION_2_3).build()
 
     @Provides
     fun provideNoteDao(database: NoteDatabase): NoteDao = database.noteDao()

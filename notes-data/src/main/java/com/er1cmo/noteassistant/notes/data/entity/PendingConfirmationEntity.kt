@@ -7,15 +7,10 @@ import androidx.room.PrimaryKey
 
 @Entity(
     tableName = "pending_confirmations",
-    indices = [
-        Index(value = ["command_log_id"]),
-        Index(value = ["expires_at"]),
-        Index(value = ["status"]),
-    ],
+    indices = [Index("command_log_id"), Index("expires_at"), Index("status")],
 )
 data class PendingConfirmationEntity(
-    @PrimaryKey
-    @ColumnInfo(name = "confirmation_id") val confirmationId: String,
+    @PrimaryKey @ColumnInfo(name = "confirmation_id") val confirmationId: String,
     @ColumnInfo(name = "command_log_id") val commandLogId: Long,
     @ColumnInfo(name = "tool_name") val toolName: String,
     @ColumnInfo(name = "arguments_json") val argumentsJson: String,

@@ -7,11 +7,7 @@ import androidx.room.PrimaryKey
 
 @Entity(
     tableName = "note_revisions",
-    indices = [
-        Index(value = ["note_id"]),
-        Index(value = ["command_log_id"]),
-        Index(value = ["created_at"]),
-    ],
+    indices = [Index("note_id"), Index("command_log_id")],
 )
 data class NoteRevisionEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
@@ -24,9 +20,9 @@ data class NoteRevisionEntity(
     @ColumnInfo(name = "pinned_snapshot") val pinnedSnapshot: Boolean,
     @ColumnInfo(name = "archived_snapshot") val archivedSnapshot: Boolean,
     @ColumnInfo(name = "deleted_snapshot") val deletedSnapshot: Boolean,
-    @ColumnInfo(name = "color_snapshot") val colorSnapshot: String?,
+    @ColumnInfo(name = "color_snapshot") val colorSnapshot: String? = null,
     @ColumnInfo(name = "created_at") val createdAt: Long,
     val source: String,
-    val reason: String?,
-    @ColumnInfo(name = "command_log_id") val commandLogId: Long?,
+    val reason: String? = null,
+    @ColumnInfo(name = "command_log_id") val commandLogId: Long? = null,
 )

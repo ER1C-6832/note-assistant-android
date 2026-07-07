@@ -3,33 +3,16 @@ package com.er1cmo.noteassistant.notes.data.mapper
 import com.er1cmo.noteassistant.notes.data.entity.AssistantCommandLogEntity
 import com.er1cmo.noteassistant.notes.data.entity.NoteRevisionEntity
 import com.er1cmo.noteassistant.notes.data.entity.PendingConfirmationEntity
-import com.er1cmo.noteassistant.notes.domain.model.command.AssistantCommandLog
-import com.er1cmo.noteassistant.notes.domain.model.command.CommandErrorCode
-import com.er1cmo.noteassistant.notes.domain.model.command.CommandSource
-import com.er1cmo.noteassistant.notes.domain.model.command.CommandStatus
-import com.er1cmo.noteassistant.notes.domain.model.command.ConfirmationStatus
-import com.er1cmo.noteassistant.notes.domain.model.command.NoteRevision
-import com.er1cmo.noteassistant.notes.domain.model.command.PendingConfirmation
-import com.er1cmo.noteassistant.notes.domain.model.command.RiskLevel
-import com.er1cmo.noteassistant.notes.domain.model.command.ToolName
-
-fun NoteRevisionEntity.toDomain(): NoteRevision = NoteRevision(
-    id = id,
-    noteId = noteId,
-    titleSnapshot = titleSnapshot,
-    contentSnapshot = contentSnapshot,
-    tagsSnapshotJson = tagsSnapshotJson,
-    typeSnapshot = typeSnapshot,
-    isDoneSnapshot = isDoneSnapshot,
-    pinnedSnapshot = pinnedSnapshot,
-    archivedSnapshot = archivedSnapshot,
-    deletedSnapshot = deletedSnapshot,
-    colorSnapshot = colorSnapshot,
-    createdAt = createdAt,
-    source = CommandSource.fromStorageValue(source),
-    reason = reason,
-    commandLogId = commandLogId,
-)
+import com.er1cmo.noteassistant.notes.domain.command.CommandErrorCode
+import com.er1cmo.noteassistant.notes.domain.command.CommandSource
+import com.er1cmo.noteassistant.notes.domain.command.CommandStatus
+import com.er1cmo.noteassistant.notes.domain.command.ConfirmationStatus
+import com.er1cmo.noteassistant.notes.domain.command.RiskLevel
+import com.er1cmo.noteassistant.notes.domain.command.ToolName
+import com.er1cmo.noteassistant.notes.domain.model.AssistantCommandLog
+import com.er1cmo.noteassistant.notes.domain.model.NoteRevision
+import com.er1cmo.noteassistant.notes.domain.model.NoteType
+import com.er1cmo.noteassistant.notes.domain.model.PendingConfirmation
 
 fun NoteRevision.toEntity(): NoteRevisionEntity = NoteRevisionEntity(
     id = id,
@@ -37,7 +20,7 @@ fun NoteRevision.toEntity(): NoteRevisionEntity = NoteRevisionEntity(
     titleSnapshot = titleSnapshot,
     contentSnapshot = contentSnapshot,
     tagsSnapshotJson = tagsSnapshotJson,
-    typeSnapshot = typeSnapshot,
+    typeSnapshot = typeSnapshot.storageValue,
     isDoneSnapshot = isDoneSnapshot,
     pinnedSnapshot = pinnedSnapshot,
     archivedSnapshot = archivedSnapshot,
@@ -49,25 +32,22 @@ fun NoteRevision.toEntity(): NoteRevisionEntity = NoteRevisionEntity(
     commandLogId = commandLogId,
 )
 
-fun AssistantCommandLogEntity.toDomain(): AssistantCommandLog = AssistantCommandLog(
+fun NoteRevisionEntity.toDomain(): NoteRevision = NoteRevision(
     id = id,
-    conversationId = conversationId,
-    source = CommandSource.fromStorageValue(source),
-    userText = userText,
-    recognizedText = recognizedText,
-    normalizedIntent = normalizedIntent,
-    toolName = ToolName.fromStorageValue(toolName),
-    argumentsJson = argumentsJson,
-    riskLevel = RiskLevel.fromStorageValue(riskLevel),
-    confirmationStatus = ConfirmationStatus.fromStorageValue(confirmationStatus),
-    resultJson = resultJson,
-    affectedNoteIdsJson = affectedNoteIdsJson,
-    affectedTagIdsJson = affectedTagIdsJson,
-    status = CommandStatus.fromStorageValue(status),
-    errorCode = CommandErrorCode.fromStorageValue(errorCode),
-    errorMessage = errorMessage,
+    noteId = noteId,
+    titleSnapshot = titleSnapshot,
+    contentSnapshot = contentSnapshot,
+    tagsSnapshotJson = tagsSnapshotJson,
+    typeSnapshot = if (typeSnapshot.lowercase() == "todo") NoteType.Todo else NoteType.Normal,
+    isDoneSnapshot = isDoneSnapshot,
+    pinnedSnapshot = pinnedSnapshot,
+    archivedSnapshot = archivedSnapshot,
+    deletedSnapshot = deletedSnapshot,
+    colorSnapshot = colorSnapshot,
     createdAt = createdAt,
-    completedAt = completedAt,
+    source = CommandSource.fromStorage(source),
+    reason = reason,
+    commandLogId = commandLogId,
 )
 
 fun AssistantCommandLog.toEntity(): AssistantCommandLogEntity = AssistantCommandLogEntity(
@@ -91,17 +71,25 @@ fun AssistantCommandLog.toEntity(): AssistantCommandLogEntity = AssistantCommand
     completedAt = completedAt,
 )
 
-fun PendingConfirmationEntity.toDomain(): PendingConfirmation = PendingConfirmation(
-    confirmationId = confirmationId,
-    commandLogId = commandLogId,
-    toolName = ToolName.fromStorageValue(toolName),
+fun AssistantCommandLogEntity.toDomain(): AssistantCommandLog = AssistantCommandLog(
+    id = id,
+    conversationId = conversationId,
+    source = CommandSource.fromStorage(source),
+    userText = userText,
+    recognizedText = recognizedText,
+    normalizedIntent = normalizedIntent,
+    toolName = ToolName.fromStorage(toolName),
     argumentsJson = argumentsJson,
-    riskLevel = RiskLevel.fromStorageValue(riskLevel),
-    previewJson = previewJson,
+    riskLevel = RiskLevel.fromStorage(riskLevel),
+    confirmationStatus = ConfirmationStatus.fromStorage(confirmationStatus),
+    resultJson = resultJson,
+    affectedNoteIdsJson = affectedNoteIdsJson,
+    affectedTagIdsJson = affectedTagIdsJson,
+    status = CommandStatus.fromStorage(status),
+    errorCode = CommandErrorCode.fromStorage(errorCode),
+    errorMessage = errorMessage,
     createdAt = createdAt,
-    expiresAt = expiresAt,
-    source = CommandSource.fromStorageValue(source),
-    status = ConfirmationStatus.fromStorageValue(status),
+    completedAt = completedAt,
 )
 
 fun PendingConfirmation.toEntity(): PendingConfirmationEntity = PendingConfirmationEntity(
@@ -116,3 +104,22 @@ fun PendingConfirmation.toEntity(): PendingConfirmationEntity = PendingConfirmat
     source = source.storageValue,
     status = status.storageValue,
 )
+
+fun PendingConfirmationEntity.toDomain(): PendingConfirmation = PendingConfirmation(
+    confirmationId = confirmationId,
+    commandLogId = commandLogId,
+    toolName = ToolName.fromStorage(toolName),
+    argumentsJson = argumentsJson,
+    riskLevel = RiskLevel.fromStorage(riskLevel),
+    previewJson = previewJson,
+    createdAt = createdAt,
+    expiresAt = expiresAt,
+    source = CommandSource.fromStorage(source),
+    status = ConfirmationStatus.fromStorage(status),
+)
+
+private val NoteType.storageValue: String
+    get() = when (this) {
+        NoteType.Normal -> "normal"
+        NoteType.Todo -> "todo"
+    }

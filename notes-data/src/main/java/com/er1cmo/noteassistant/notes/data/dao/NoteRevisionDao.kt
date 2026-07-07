@@ -9,18 +9,15 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface NoteRevisionDao {
-    @Query("SELECT * FROM note_revisions WHERE note_id = :noteId ORDER BY created_at DESC, id DESC")
-    fun observeForNote(noteId: Long): Flow<List<NoteRevisionEntity>>
-
-    @Query("SELECT * FROM note_revisions ORDER BY created_at DESC, id DESC LIMIT :limit")
-    fun observeRecent(limit: Int): Flow<List<NoteRevisionEntity>>
-
-    @Query("SELECT * FROM note_revisions WHERE id = :id LIMIT 1")
-    fun getRevisionById(id: Long): NoteRevisionEntity?
-
     @Insert(onConflict = OnConflictStrategy.ABORT)
     fun insertRevision(revision: NoteRevisionEntity): Long
 
-    @Insert(onConflict = OnConflictStrategy.ABORT)
-    fun insertRevisions(revisions: List<NoteRevisionEntity>): List<Long>
+    @Query("SELECT * FROM note_revisions WHERE note_id = :noteId ORDER BY created_at DESC, id DESC")
+    fun observeRevisionsForNote(noteId: Long): Flow<List<NoteRevisionEntity>>
+
+    @Query("SELECT * FROM note_revisions WHERE note_id = :noteId ORDER BY created_at DESC, id DESC")
+    fun listRevisionsForNote(noteId: Long): List<NoteRevisionEntity>
+
+    @Query("SELECT * FROM note_revisions WHERE id = :id LIMIT 1")
+    fun getRevisionById(id: Long): NoteRevisionEntity?
 }
