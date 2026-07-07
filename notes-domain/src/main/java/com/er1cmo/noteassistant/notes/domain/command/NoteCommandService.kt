@@ -51,6 +51,7 @@ class NoteCommandService @Inject constructor(
                 ToolName.NotesPin -> setPinned(arguments, argumentsJson, source)
                 ToolName.NotesArchive -> setArchived(arguments, argumentsJson, source)
                 ToolName.NotesDelete -> deleteNotes(arguments, argumentsJson, source, existingLogId = null, fromConfirmation = false)
+                ToolName.NotesRestoreRevision -> restoreRevision(arguments, argumentsJson, source, existingLogId = null, fromConfirmation = false)
                 ToolName.TagsBind -> bindTags(arguments, argumentsJson, source, existingLogId = null, fromConfirmation = false)
                 ToolName.TagsDelete -> deleteTag(arguments, argumentsJson, source, existingLogId = null, fromConfirmation = false)
                 else -> unsupported(tool, argumentsJson, source)
@@ -127,6 +128,7 @@ class NoteCommandService @Inject constructor(
         return when (pending.toolName) {
             ToolName.NotesReplaceContent -> replaceContent(args, pending.argumentsJson, pending.source, pending.commandLogId, fromConfirmation = true, pendingPreviewJson = pending.previewJson)
             ToolName.NotesDelete -> deleteNotes(args, pending.argumentsJson, pending.source, pending.commandLogId, fromConfirmation = true)
+            ToolName.NotesRestoreRevision -> restoreRevision(args, pending.argumentsJson, pending.source, pending.commandLogId, fromConfirmation = true, pendingPreviewJson = pending.previewJson)
             ToolName.TagsBind -> bindTags(args, pending.argumentsJson, pending.source, pending.commandLogId, fromConfirmation = true)
             ToolName.TagsDelete -> deleteTag(args, pending.argumentsJson, pending.source, pending.commandLogId, fromConfirmation = true, pendingPreviewJson = pending.previewJson)
             ToolName.NotesPin -> setPinned(args.put("confirmed", true), pending.argumentsJson, pending.source, pending.commandLogId, fromConfirmation = true)
@@ -452,6 +454,111 @@ class NoteCommandService @Inject constructor(
         val resultJson = JSONObject().put("deleted", true).put("affected_note_ids", affectedIds.toJsonArray()).toString()
         finishLog(logId = logId, status = status, resultJson = resultJson, affectedNoteIds = affectedIds, confirmationStatus = if (fromConfirmation) ConfirmationStatus.Confirmed else ConfirmationStatus.NotRequired)
         return CommandResult.success("已删除 ${affectedIds.size} 条便签", risk, logId, affectedNoteIds = affectedIds, resultJson = resultJson)
+    }
+
+    private suspend fun restoreRevision(
+        args: JSONObject,
+        rawJson: String,
+        source: CommandSource,
+        existingLogId: Long?,
+        fromConfirmation: Boolean,
+        pendingPreviewJson: String? = null,
+    ): CommandResult {
+        val noteId = args.optLong("note_id", 0L)
+        val revisionId = args.optLong("revision_id", 0L)
+        if (noteId <= 0) return validationFailed(ToolName.NotesRestoreRevision, rawJson, source, "缺少 note_id")
+        if (revisionId <= 0) return validationFailed(ToolName.NotesRestoreRevision, rawJson, source, "缺少 revision_id")
+        val note = noteUseCases.getNote(noteId) ?: return notFound(ToolName.NotesRestoreRevision, rawJson, source, noteId)
+        val revision = commandTraceRepository.listRevisionsForNote(noteId).firstOrNull { it.id == revisionId }
+            ?: return writeFailedLog(
+                tool = ToolName.NotesRestoreRevision,
+                argumentsJson = rawJson,
+                source = source,
+                riskLevel = RiskLevel.High,
+                message = "没有找到 revision：$revisionId",
+                errorCode = CommandErrorCode.NotFound,
+            )
+        val risk = riskPolicy.classify(CommandRiskInput(toolName = ToolName.NotesRestoreRevision, source = source, affectedNoteCount = 1))
+        val confirmed = args.optBoolean("confirmed", false) || fromConfirmation
+        if (!confirmed) {
+            val previewJson = JSONObject()
+                .put("summary", "将恢复便签到历史版本，需要确认")
+                .put("note_id", note.id)
+                .put("revision_id", revision.id)
+                .put("title", note.title)
+                .put("current_content_preview", note.content.take(80))
+                .put("revision_content_preview", revision.contentSnapshot.take(80))
+                .put("expected_updated_at", note.updatedAt)
+                .put("affected_note_ids", listOf(note.id).toJsonArray())
+                .toString()
+            return createPendingConfirmation(ToolName.NotesRestoreRevision, rawJson, source, risk, previewJson, listOf(note.id), emptyList(), "将把《${note.title.ifBlank { "未命名便签" }}》恢复到 revision#$revisionId，是否确认？")
+        }
+        if (fromConfirmation && pendingPreviewJson != null) {
+            val expectedUpdatedAt = runCatching { JSONObject(pendingPreviewJson).optLong("expected_updated_at", note.updatedAt) }.getOrDefault(note.updatedAt)
+            if (expectedUpdatedAt != note.updatedAt) {
+                existingLogId?.let {
+                    finishLog(
+                        logId = it,
+                        status = CommandStatus.Blocked,
+                        errorCode = CommandErrorCode.Conflict,
+                        errorMessage = "便签在确认前已发生变化，请重新发起恢复",
+                        confirmationStatus = ConfirmationStatus.Confirmed,
+                    )
+                }
+                return CommandResult.failure(
+                    message = "便签在确认前已发生变化，请重新发起恢复",
+                    riskLevel = RiskLevel.High,
+                    commandLogId = existingLogId,
+                    errorCode = CommandErrorCode.Conflict,
+                )
+            }
+        }
+        val logId = existingLogId ?: insertInitialLog(ToolName.NotesRestoreRevision, rawJson, source, risk)
+        insertRevisionSnapshots(logId, source, "restore_revision_current_state", listOf(note))
+        if (note.deleted && !revision.deletedSnapshot) {
+            noteUseCases.restoreDeletedNote(note.id)
+        }
+        val editableNote = noteUseCases.getNote(note.id) ?: note
+        if (editableNote.deleted && revision.deletedSnapshot) {
+            finishLog(
+                logId = logId,
+                status = CommandStatus.Blocked,
+                errorCode = CommandErrorCode.Conflict,
+                errorMessage = "当前便签仍在最近删除中，无法恢复到已删除快照",
+                confirmationStatus = if (fromConfirmation) ConfirmationStatus.Confirmed else ConfirmationStatus.NotRequired,
+            )
+            return CommandResult.failure("当前便签仍在最近删除中，无法恢复到已删除快照", risk, CommandErrorCode.Conflict, logId)
+        }
+        noteUseCases.updateNote(
+            id = note.id,
+            title = revision.titleSnapshot,
+            content = revision.contentSnapshot,
+            type = revision.typeSnapshot,
+            color = revision.colorSnapshot,
+            tagText = revision.tagsTextFromSnapshot(),
+        )
+        val afterText = noteUseCases.getNote(note.id) ?: editableNote
+        if (revision.typeSnapshot == NoteType.Todo && afterText.isDone != revision.isDoneSnapshot) {
+            noteUseCases.toggleTodoDone(note.id, revision.isDoneSnapshot)
+        }
+        val afterDone = noteUseCases.getNote(note.id) ?: afterText
+        if (afterDone.pinned != revision.pinnedSnapshot) {
+            noteUseCases.setNotePinned(note.id, revision.pinnedSnapshot)
+        }
+        val afterPinned = noteUseCases.getNote(note.id) ?: afterDone
+        if (!afterPinned.deleted && afterPinned.archived != revision.archivedSnapshot) {
+            noteUseCases.setNoteArchived(note.id, revision.archivedSnapshot)
+        }
+        if (revision.deletedSnapshot) {
+            noteUseCases.softDeleteNote(note.id)
+        }
+        val resultJson = JSONObject()
+            .put("note_id", note.id)
+            .put("revision_id", revision.id)
+            .put("restored", true)
+            .toString()
+        finishLog(logId = logId, status = CommandStatus.Success, resultJson = resultJson, affectedNoteIds = listOf(note.id), confirmationStatus = if (fromConfirmation) ConfirmationStatus.Confirmed else ConfirmationStatus.NotRequired)
+        return CommandResult.success("已恢复 revision#$revisionId", risk, logId, affectedNoteIds = listOf(note.id), resultJson = resultJson)
     }
 
     private suspend fun bindTags(
@@ -799,6 +906,16 @@ class NoteCommandService @Inject constructor(
             )
         }
     }
+
+    private fun NoteRevision.tagsTextFromSnapshot(): String = runCatching {
+        val array = JSONArray(tagsSnapshotJson)
+        buildList {
+            for (index in 0 until array.length()) {
+                val value = array.optString(index).trim()
+                if (value.isNotBlank()) add(value)
+            }
+        }.joinToString("、")
+    }.getOrDefault("")
 
     private fun List<Long>.toJsonArray(): JSONArray = JSONArray().also { array -> forEach { array.put(it) } }
 

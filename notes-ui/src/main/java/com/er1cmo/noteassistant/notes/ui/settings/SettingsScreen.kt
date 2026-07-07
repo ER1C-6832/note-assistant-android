@@ -40,6 +40,7 @@ import com.er1cmo.noteassistant.notes.domain.command.CommandResult
 import com.er1cmo.noteassistant.notes.domain.command.CommandSource
 import com.er1cmo.noteassistant.notes.domain.command.NoteCommandService
 import com.er1cmo.noteassistant.notes.domain.model.AssistantCommandLog
+import com.er1cmo.noteassistant.notes.domain.model.NoteRevision
 import com.er1cmo.noteassistant.notes.domain.repository.CommandTraceRepository
 import com.er1cmo.noteassistant.notes.ui.components.StatusPill
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -96,6 +97,13 @@ fun SettingsRoute(
                 onConfirmClick = viewModel::confirmPending,
                 onRejectClick = viewModel::rejectPending,
             )
+            RevisionDebugBox(
+                state = state,
+                onNoteIdChange = viewModel::setRevisionNoteId,
+                onRevisionIdChange = viewModel::setRevisionToRestoreId,
+                onLoadClick = viewModel::loadRevisions,
+                onApplyRestoreSampleClick = viewModel::applyRestoreRevisionSample,
+            )
             CommandLogBox(logs = state.recentLogs)
             Button(onClick = onBackClick, shape = RoundedCornerShape(16.dp)) { Text("返回") }
             Spacer(Modifier.height(24.dp))
@@ -107,13 +115,16 @@ fun SettingsRoute(
 class SettingsViewModel @Inject constructor(
     private val settingsRepository: SettingsRepository,
     private val noteCommandService: NoteCommandService,
-    commandTraceRepository: CommandTraceRepository,
+    private val commandTraceRepository: CommandTraceRepository,
 ) : ViewModel() {
     private val toolName = MutableStateFlow("notes.create")
     private val argumentsJson = MutableStateFlow("{\"title\":\"Phase2 模拟创建\",\"content\":\"从本地工具模拟器创建\",\"type\":\"normal\",\"tags\":[\"Phase2\"]}")
     private val isRunning = MutableStateFlow(false)
     private val resultText = MutableStateFlow("尚未执行命令")
     private val pendingConfirmationId = MutableStateFlow<String?>(null)
+    private val revisionNoteId = MutableStateFlow("")
+    private val revisionToRestoreId = MutableStateFlow("")
+    private val revisionText = MutableStateFlow("输入 note_id 后点击刷新 revision。")
 
     private data class ThemeState(val home: String, val tagDrawer: String)
     private data class SimulatorState(
@@ -122,6 +133,11 @@ class SettingsViewModel @Inject constructor(
         val isRunning: Boolean,
         val resultText: String,
         val pendingConfirmationId: String?,
+    )
+    private data class RevisionState(
+        val noteId: String,
+        val revisionId: String,
+        val text: String,
     )
 
     private val themeState = combine(
@@ -139,11 +155,16 @@ class SettingsViewModel @Inject constructor(
         )
     }
 
+    private val revisionState = combine(revisionNoteId, revisionToRestoreId, revisionText) { noteId, revisionId, text ->
+        RevisionState(noteId = noteId, revisionId = revisionId, text = text)
+    }
+
     val state = combine(
         themeState,
         simulatorState,
-        commandTraceRepository.observeRecentCommandLogs(10),
-    ) { theme, simulator, logs ->
+        revisionState,
+        commandTraceRepository.observeRecentCommandLogs(20),
+    ) { theme, simulator, revision, logs ->
         SettingsUiState(
             homeBackgroundColor = theme.home,
             tagDrawerBackgroundColor = theme.tagDrawer,
@@ -152,6 +173,9 @@ class SettingsViewModel @Inject constructor(
             isRunning = simulator.isRunning,
             resultText = simulator.resultText,
             pendingConfirmationId = simulator.pendingConfirmationId,
+            revisionNoteId = revision.noteId,
+            revisionToRestoreId = revision.revisionId,
+            revisionText = revision.text,
             recentLogs = logs,
         )
     }.stateIn(
@@ -174,6 +198,14 @@ class SettingsViewModel @Inject constructor(
 
     fun setArgumentsJson(value: String) {
         argumentsJson.value = value
+    }
+
+    fun setRevisionNoteId(value: String) {
+        revisionNoteId.value = value.filter { it.isDigit() }
+    }
+
+    fun setRevisionToRestoreId(value: String) {
+        revisionToRestoreId.value = value.filter { it.isDigit() }
     }
 
     fun applySample(sample: ToolSample) {
@@ -226,6 +258,32 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    fun loadRevisions() {
+        val noteId = revisionNoteId.value.toLongOrNull()
+        if (noteId == null || noteId <= 0L) {
+            revisionText.value = "请输入有效 note_id。"
+            return
+        }
+        viewModelScope.launch {
+            val revisions = commandTraceRepository.listRevisionsForNote(noteId)
+            revisionText.value = revisions.toRevisionDebugText(noteId)
+            revisionToRestoreId.value = revisions.firstOrNull()?.id?.toString().orEmpty()
+        }
+    }
+
+    fun applyRestoreRevisionSample() {
+        val noteId = revisionNoteId.value.toLongOrNull()
+        val revisionId = revisionToRestoreId.value.toLongOrNull()
+        if (noteId == null || revisionId == null || noteId <= 0L || revisionId <= 0L) {
+            revisionText.value = "需要有效 note_id 和 revision_id，才能套用 restore_revision 样例。"
+            return
+        }
+        toolName.value = "notes.restore_revision"
+        argumentsJson.value = "{\"note_id\":$noteId,\"revision_id\":$revisionId}"
+        pendingConfirmationId.value = null
+        resultText.value = "已套用 restore_revision 样例。执行后会先返回 requires_confirmation。"
+    }
+
     private fun CommandResult.toDebugText(): String = buildString {
         appendLine("status=${status.storageValue}")
         appendLine("risk=${riskLevel.storageValue}")
@@ -238,6 +296,21 @@ class SettingsViewModel @Inject constructor(
         errorCode?.let { appendLine("error=${it.storageValue}") }
         resultJson?.let { appendLine("result_json=$it") }
     }
+
+    private fun List<NoteRevision>.toRevisionDebugText(noteId: Long): String = buildString {
+        if (isEmpty()) {
+            append("note_id=$noteId 暂无 revision。先用 append / update_title / replace_content / delete 等命令产生 revision。")
+            return@buildString
+        }
+        appendLine("note_id=$noteId revision_count=$size")
+        take(8).forEach { revision ->
+            appendLine("#${revision.id} reason=${revision.reason ?: "-"} source=${revision.source.storageValue} command_log_id=${revision.commandLogId ?: "-"}")
+            appendLine("  title=${revision.titleSnapshot.ifBlank { "未命名便签" }}")
+            appendLine("  content=${revision.contentSnapshot.take(48).ifBlank { "<empty>" }}")
+            appendLine("  tags=${revision.tagsSnapshotJson}")
+            appendLine("  state type=${revision.typeSnapshot.name} done=${revision.isDoneSnapshot} pinned=${revision.pinnedSnapshot} archived=${revision.archivedSnapshot} deleted=${revision.deletedSnapshot}")
+        }
+    }
 }
 
 data class SettingsUiState(
@@ -248,6 +321,9 @@ data class SettingsUiState(
     val isRunning: Boolean = false,
     val resultText: String = "尚未执行命令",
     val pendingConfirmationId: String? = null,
+    val revisionNoteId: String = "",
+    val revisionToRestoreId: String = "",
+    val revisionText: String = "输入 note_id 后点击刷新 revision。",
     val recentLogs: List<AssistantCommandLog> = emptyList(),
 )
 
@@ -278,7 +354,7 @@ private fun ToolSimulatorBox(
     ) {
         Text("Phase2 本地工具模拟器", color = Color(0xFF222832), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
         Text(
-            "支持中低风险直接执行；notes.delete / notes.replace_content / tags.delete / tags.bind replace 会先返回 requires_confirmation。",
+            "支持完整 tool name + arguments JSON。高风险命令先返回 requires_confirmation，必须确认后才执行。",
             color = Color(0xFF697386),
             style = MaterialTheme.typography.bodySmall,
         )
@@ -362,6 +438,55 @@ private fun ToolSimulatorBox(
 }
 
 @Composable
+private fun RevisionDebugBox(
+    state: SettingsUiState,
+    onNoteIdChange: (String) -> Unit,
+    onRevisionIdChange: (String) -> Unit,
+    onLoadClick: () -> Unit,
+    onApplyRestoreSampleClick: () -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(Color.White.copy(alpha = 0.92f), RoundedCornerShape(18.dp))
+            .padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Text("Revision 验证入口", color = Color(0xFF222832), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+        Text("输入 note_id 查看最近 revision；套用 restore_revision 后仍需走高风险确认。", color = Color(0xFF697386), style = MaterialTheme.typography.bodySmall)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            OutlinedTextField(
+                value = state.revisionNoteId,
+                onValueChange = onNoteIdChange,
+                label = { Text("note_id") },
+                singleLine = true,
+                modifier = Modifier.weight(1f),
+            )
+            Button(onClick = onLoadClick, shape = RoundedCornerShape(14.dp), enabled = !state.isRunning) { Text("刷新") }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            OutlinedTextField(
+                value = state.revisionToRestoreId,
+                onValueChange = onRevisionIdChange,
+                label = { Text("revision_id") },
+                singleLine = true,
+                modifier = Modifier.weight(1f),
+            )
+            Button(onClick = onApplyRestoreSampleClick, shape = RoundedCornerShape(14.dp), enabled = !state.isRunning) { Text("套用恢复") }
+        }
+        Text(
+            state.revisionText,
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(Color(0xFFF6F7FB), RoundedCornerShape(14.dp))
+                .padding(10.dp),
+            style = MaterialTheme.typography.bodySmall,
+            color = Color(0xFF344054),
+        )
+    }
+}
+
+@Composable
 private fun CommandLogBox(logs: List<AssistantCommandLog>) {
     Column(
         modifier = Modifier
@@ -386,10 +511,12 @@ private fun CommandLogBox(logs: List<AssistantCommandLog>) {
                         Text("#${log.id} ${log.toolName.storageValue}", modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold, color = Color(0xFF344054))
                         Text(log.status.storageValue, color = Color(0xFF3D6BFF), style = MaterialTheme.typography.labelMedium)
                     }
-                    Text("risk=${log.riskLevel.storageValue} · confirmation=${log.confirmationStatus.storageValue}", color = Color(0xFF697386), style = MaterialTheme.typography.bodySmall)
+                    Text("source=${log.source.storageValue} · risk=${log.riskLevel.storageValue} · confirmation=${log.confirmationStatus.storageValue}", color = Color(0xFF697386), style = MaterialTheme.typography.bodySmall)
+                    Text("created=${log.createdAt} · completed=${log.completedAt ?: "-"}", color = Color(0xFF697386), style = MaterialTheme.typography.bodySmall)
                     log.errorMessage?.let { Text(it, color = Color(0xFFB42318), style = MaterialTheme.typography.bodySmall) }
                     log.affectedNoteIdsJson?.let { Text("notes=$it", color = Color(0xFF697386), style = MaterialTheme.typography.bodySmall) }
                     log.affectedTagIdsJson?.let { Text("tags=$it", color = Color(0xFF697386), style = MaterialTheme.typography.bodySmall) }
+                    log.resultJson?.let { Text("result=${it.take(140)}", color = Color(0xFF697386), style = MaterialTheme.typography.bodySmall) }
                 }
             }
         }
@@ -487,6 +614,7 @@ private val toolSamples = listOf(
     ToolSample("加标签", "tags.bind", "{\"note_id\":1,\"tags\":[\"客户\",\"Phase2\"],\"mode\":\"add\"}"),
     ToolSample("替换标签", "tags.bind", "{\"note_id\":1,\"tags\":[\"替换后\"],\"mode\":\"replace\"}"),
     ToolSample("删除标签", "tags.delete", "{\"tag_id\":1}"),
+    ToolSample("恢复版本", "notes.restore_revision", "{\"note_id\":1,\"revision_id\":1}"),
 )
 
 private fun colorFromHex(hex: String): Color = runCatching { Color(AndroidColor.parseColor(hex)) }.getOrDefault(Color.White)
