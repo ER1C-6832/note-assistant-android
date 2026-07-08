@@ -8,6 +8,8 @@ interface AssistantController {
 
     suspend fun enableAssistant()
     suspend fun disableAssistant()
+    suspend fun useFakeRuntime()
+    suspend fun useRealRuntime()
     suspend fun connect()
     suspend fun reconnect()
     suspend fun disconnect(reason: String = "user_close")

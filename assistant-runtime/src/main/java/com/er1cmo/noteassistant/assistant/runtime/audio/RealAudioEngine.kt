@@ -16,6 +16,7 @@ class RealAudioEngine @Inject constructor() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val encodedFramesLock = Any()
     private val encodedFrames = mutableListOf<ByteArray>()
+    private val playbackLock = Any()
 
     @Volatile private var recording = false
     @Volatile private var activeAudioRecord: AudioRecord? = null
@@ -26,6 +27,13 @@ class RealAudioEngine @Inject constructor() {
     @Volatile private var failedUploads = 0
     @Volatile private var lastError: String? = null
     @Volatile private var processingSummary: String = "尚未启动真实录音"
+
+    private var downlinkDecoder: AndroidOpusDecoder? = null
+    private var downlinkPlayer: AndroidAudioPlayer? = null
+    private var downlinkPlaybackStarted: Boolean = false
+    private var downlinkPcmFrames: Int = 0
+    private var downlinkPcmBytes: Long = 0L
+    private var downlinkOpusFrames: Int = 0
 
     fun isRecording(): Boolean = recording
 
@@ -155,69 +163,81 @@ class RealAudioEngine @Inject constructor() {
     }
 
     suspend fun playOpusFrames(opusFrames: List<ByteArray>): RealAudioPlaybackResult = withContext(Dispatchers.IO) {
-        if (opusFrames.isEmpty()) {
-            return@withContext RealAudioPlaybackResult(
-                success = false,
-                opusFrames = 0,
-                pcmFrames = 0,
-                pcmBytes = 0L,
-                summary = "没有可播放的 Opus 帧；请确认设备编码器是否产出数据",
-            )
-        }
-        var decoder: AndroidOpusDecoder? = null
-        var player: AndroidAudioPlayer? = null
-        var pcmFrames = 0
-        var pcmBytes = 0L
-        var playbackStarted = false
+        releaseDownlinkPlayback()
+        opusFrames.forEach { packet -> playIncomingOpusFrameInternal(packet) }
+        RealAudioPlaybackResult(
+            success = downlinkPlaybackStarted,
+            opusFrames = downlinkOpusFrames,
+            pcmFrames = downlinkPcmFrames,
+            pcmBytes = downlinkPcmBytes,
+            summary = if (downlinkPlaybackStarted) {
+                "真实下行播放验证完成：Opus -> PCM -> AudioTrack，PCM 帧 $downlinkPcmFrames，${downlinkPcmBytes}B"
+            } else {
+                "Opus 解码未产生 PCM，AudioTrack 未播放"
+            },
+        ).also { releaseDownlinkPlayback() }
+    }
+
+    suspend fun playIncomingOpusFrame(packet: ByteArray): RealAudioPlaybackResult = withContext(Dispatchers.IO) {
         try {
-            decoder = AndroidOpusDecoder()
-            player = AndroidAudioPlayer()
-            opusFrames.take(MAX_LOOPBACK_PLAYBACK_FRAMES).forEach { packet ->
-                val decoded = decoder.decode(packet)
-                decoded.forEach { pcm ->
-                    if (pcm.isEmpty()) return@forEach
-                    if (!playbackStarted) {
-                        player.play()
-                        playbackStarted = true
-                    }
-                    player.writePcm(pcm)
-                    pcmFrames += 1
-                    pcmBytes += pcm.size
-                }
-            }
-            decoder.release().forEach { pcm ->
-                if (pcm.isNotEmpty()) {
-                    if (!playbackStarted) {
-                        player.play()
-                        playbackStarted = true
-                    }
-                    player.writePcm(pcm)
-                    pcmFrames += 1
-                    pcmBytes += pcm.size
-                }
-            }
+            playIncomingOpusFrameInternal(packet)
             RealAudioPlaybackResult(
-                success = playbackStarted,
-                opusFrames = opusFrames.size.coerceAtMost(MAX_LOOPBACK_PLAYBACK_FRAMES),
-                pcmFrames = pcmFrames,
-                pcmBytes = pcmBytes,
-                summary = if (playbackStarted) {
-                    "真实下行播放验证完成：Opus -> PCM -> AudioTrack，PCM 帧 $pcmFrames，${pcmBytes}B"
+                success = downlinkPlaybackStarted,
+                opusFrames = downlinkOpusFrames,
+                pcmFrames = downlinkPcmFrames,
+                pcmBytes = downlinkPcmBytes,
+                summary = if (downlinkPlaybackStarted) {
+                    "真实服务端音频已解码并写入 AudioTrack：opus=$downlinkOpusFrames pcm=$downlinkPcmFrames bytes=$downlinkPcmBytes"
                 } else {
-                    "Opus 解码未产生 PCM，AudioTrack 未播放"
+                    "已接收真实服务端 Opus 帧，但暂未解出 PCM：opus=$downlinkOpusFrames"
                 },
             )
         } catch (exception: Exception) {
             RealAudioPlaybackResult(
                 success = false,
-                opusFrames = opusFrames.size.coerceAtMost(MAX_LOOPBACK_PLAYBACK_FRAMES),
-                pcmFrames = pcmFrames,
-                pcmBytes = pcmBytes,
-                summary = "真实下行播放失败：${exception.message ?: exception::class.java.simpleName}",
+                opusFrames = downlinkOpusFrames,
+                pcmFrames = downlinkPcmFrames,
+                pcmBytes = downlinkPcmBytes,
+                summary = "真实服务端音频播放失败：${exception.message ?: exception::class.java.simpleName}",
             )
-        } finally {
-            runCatching { player?.release() }
-            runCatching { decoder?.release() }
+        }
+    }
+
+    fun stopPlaybackAndRelease() {
+        releaseDownlinkPlayback()
+    }
+
+    private fun playIncomingOpusFrameInternal(packet: ByteArray) {
+        if (packet.isEmpty()) return
+        synchronized(playbackLock) {
+            if (downlinkDecoder == null) downlinkDecoder = AndroidOpusDecoder()
+            if (downlinkPlayer == null) downlinkPlayer = AndroidAudioPlayer()
+            downlinkOpusFrames += 1
+            val decoded = downlinkDecoder?.decode(packet).orEmpty()
+            decoded.forEach { pcm ->
+                if (pcm.isEmpty()) return@forEach
+                val player = downlinkPlayer ?: return@forEach
+                if (!downlinkPlaybackStarted) {
+                    player.play()
+                    downlinkPlaybackStarted = true
+                }
+                player.writePcm(pcm)
+                downlinkPcmFrames += 1
+                downlinkPcmBytes += pcm.size
+            }
+        }
+    }
+
+    private fun releaseDownlinkPlayback() {
+        synchronized(playbackLock) {
+            runCatching { downlinkDecoder?.release() }
+            runCatching { downlinkPlayer?.release() }
+            downlinkDecoder = null
+            downlinkPlayer = null
+            downlinkPlaybackStarted = false
+            downlinkPcmFrames = 0
+            downlinkPcmBytes = 0L
+            downlinkOpusFrames = 0
         }
     }
 
@@ -228,11 +248,11 @@ class RealAudioEngine @Inject constructor() {
         recordingJob = null
         activeAudioRecord = null
         startedAtMs = null
+        releaseDownlinkPlayback()
     }
 
     private companion object {
         const val MAX_STOP_LATENCY_MS = 300L
-        const val MAX_LOOPBACK_PLAYBACK_FRAMES = 24
     }
 }
 

@@ -36,6 +36,11 @@ enum class AssistantAudioStatus(val storageValue: String) {
     Error("error"),
 }
 
+enum class AssistantRuntimeMode(val storageValue: String) {
+    Fake("fake"),
+    Real("real"),
+}
+
 data class AssistantState(
     val phase: AssistantPhase = AssistantPhase.Disabled,
     val connection: AssistantConnectionStatus = AssistantConnectionStatus.Disconnected,
@@ -50,6 +55,7 @@ data class AssistantState(
     val reconnectAttempt: Int = 0,
     val assistantEnabled: Boolean = false,
     val fakeRuntime: Boolean = true,
+    val runtimeMode: AssistantRuntimeMode = AssistantRuntimeMode.Fake,
     val deviceId: String? = null,
     val clientId: String? = null,
     val activationCode: String? = null,
@@ -66,9 +72,17 @@ data class AssistantState(
     val lastCloseReason: String? = null,
     val lastReconnectDecision: String? = null,
     val runtimeErrorCount: Int = 0,
+    val gateBRealHandshakeVerified: Boolean = false,
+    val gateBRealTextVerified: Boolean = false,
+    val gateBRealAudioUploadVerified: Boolean = false,
+    val gateBRealAudioPlaybackVerified: Boolean = false,
+    val gateBRealToolCallBlockedVerified: Boolean = false,
 ) {
     val isConnected: Boolean
         get() = connection == AssistantConnectionStatus.Connected && sessionId != null
+
+    val isRealRuntime: Boolean
+        get() = runtimeMode == AssistantRuntimeMode.Real
 
     companion object {
         fun disabled(nowMillis: Long? = null): AssistantState = AssistantState(

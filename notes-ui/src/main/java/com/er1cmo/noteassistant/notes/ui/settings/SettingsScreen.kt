@@ -121,6 +121,8 @@ fun SettingsRoute(
                 onDisableClick = viewModel::disableAssistant,
                 onPrepareIdentityClick = viewModel::prepareDeviceIdentity,
                 onResetIdentityClick = viewModel::resetDeviceIdentity,
+                onUseFakeRuntimeClick = viewModel::useFakeRuntime,
+                onUseRealRuntimeClick = viewModel::useRealRuntime,
                 onFakeActivationClick = viewModel::runFakeActivation,
                 onRealActivationClick = viewModel::runRealActivation,
                 onConnectClick = viewModel::connectAssistant,
@@ -240,6 +242,8 @@ class SettingsViewModel @Inject constructor(
     fun disableAssistant() { viewModelScope.launch { assistantController.disableAssistant() } }
     fun prepareDeviceIdentity() { viewModelScope.launch { assistantController.ensureDeviceIdentity() } }
     fun resetDeviceIdentity() { viewModelScope.launch { assistantController.resetDeviceIdentity() } }
+    fun useFakeRuntime() { viewModelScope.launch { assistantController.useFakeRuntime() } }
+    fun useRealRuntime() { viewModelScope.launch { assistantController.useRealRuntime() } }
     fun runFakeActivation() { viewModelScope.launch { assistantController.runFakeActivation() } }
     fun runRealActivation() { viewModelScope.launch { assistantController.runRealActivation() } }
     fun connectAssistant() { viewModelScope.launch { assistantController.connect() } }
@@ -437,6 +441,8 @@ private fun Phase3RuntimeBox(
     onDisableClick: () -> Unit,
     onPrepareIdentityClick: () -> Unit,
     onResetIdentityClick: () -> Unit,
+    onUseFakeRuntimeClick: () -> Unit,
+    onUseRealRuntimeClick: () -> Unit,
     onFakeActivationClick: () -> Unit,
     onRealActivationClick: () -> Unit,
     onConnectClick: () -> Unit,
@@ -457,8 +463,9 @@ private fun Phase3RuntimeBox(
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Text("Phase3 助手运行时", color = Color(0xFF222832), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-        Text("当前是 Fake/Real audio + WebSocket + MCP + error/reconnect 验证入口；Phase3 不执行便签工具。", color = Color(0xFF697386), style = MaterialTheme.typography.bodySmall)
-        Text("phase=${assistant.phase.storageValue} · connection=${assistant.connection.storageValue} · activation=${assistant.activation.storageValue} · audio=${assistant.audio.storageValue}", color = Color(0xFF344054), style = MaterialTheme.typography.bodySmall)
+        Text("当前支持 Gate A Fake Runtime 与 Gate B Real Xiaozhi Runtime；Phase3 不执行便签工具。", color = Color(0xFF697386), style = MaterialTheme.typography.bodySmall)
+        Text("mode=${assistant.runtimeMode.storageValue} · phase=${assistant.phase.storageValue} · connection=${assistant.connection.storageValue} · activation=${assistant.activation.storageValue} · audio=${assistant.audio.storageValue}", color = Color(0xFF344054), style = MaterialTheme.typography.bodySmall)
+        Text("GateB real: handshake=${assistant.gateBRealHandshakeVerified} · text=${assistant.gateBRealTextVerified} · audio_up=${assistant.gateBRealAudioUploadVerified} · audio_play=${assistant.gateBRealAudioPlaybackVerified} · tool_block=${assistant.gateBRealToolCallBlockedVerified}", color = Color(0xFF344054), style = MaterialTheme.typography.bodySmall)
         Text("status=${assistant.statusText}", color = Color(0xFF344054), style = MaterialTheme.typography.bodySmall)
         assistant.errorMessage?.let { Text("error=$it", color = Color(0xFFB42318), style = MaterialTheme.typography.bodySmall) }
         assistant.deviceId?.let { Text("device_id=$it", color = Color(0xFF697386), style = MaterialTheme.typography.bodySmall) }
@@ -482,6 +489,10 @@ private fun Phase3RuntimeBox(
             Button(onClick = onDisableClick, shape = RoundedCornerShape(14.dp), modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6B7280))) { Text("关闭助手") }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = onUseFakeRuntimeClick, shape = RoundedCornerShape(14.dp), modifier = Modifier.weight(1f)) { Text("使用 Fake") }
+            Button(onClick = onUseRealRuntimeClick, shape = RoundedCornerShape(14.dp), modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7C3AED))) { Text("使用 Real") }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = onPrepareIdentityClick, shape = RoundedCornerShape(14.dp), modifier = Modifier.weight(1f)) { Text("准备身份") }
             Button(onClick = onResetIdentityClick, shape = RoundedCornerShape(14.dp), modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6B7280))) { Text("重置身份") }
         }
@@ -490,12 +501,12 @@ private fun Phase3RuntimeBox(
             Button(onClick = onRealActivationClick, shape = RoundedCornerShape(14.dp), modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7C3AED))) { Text("真实 OTA") }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = onConnectClick, shape = RoundedCornerShape(14.dp), modifier = Modifier.weight(1f)) { Text("连接 Fake") }
+            Button(onClick = onConnectClick, shape = RoundedCornerShape(14.dp), modifier = Modifier.weight(1f)) { Text("连接当前模式") }
             Button(onClick = onReconnectClick, shape = RoundedCornerShape(14.dp), modifier = Modifier.weight(1f)) { Text("重连") }
             Button(onClick = onDisconnectClick, shape = RoundedCornerShape(14.dp), modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6B7280))) { Text("断开") }
         }
         OutlinedTextField(value = state.assistantTextInput, onValueChange = onTextInputChange, label = { Text("文本对话测试") }, minLines = 2, maxLines = 4, modifier = Modifier.fillMaxWidth())
-        Button(onClick = onSendTextClick, shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth()) { Text("发送文本到 Fake Runtime") }
+        Button(onClick = onSendTextClick, shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth()) { Text("发送文本到当前模式") }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = onStartPttClick, shape = RoundedCornerShape(14.dp), modifier = Modifier.weight(1f)) { Text("开始 PTT（请求麦克风）") }
             Button(onClick = onStopPttClick, shape = RoundedCornerShape(14.dp), modifier = Modifier.weight(1f)) { Text("结束 PTT") }

@@ -30,14 +30,9 @@ class XiaozhiWebSocketClient @Inject constructor(
         .writeTimeout(10, TimeUnit.SECONDS)
         .build()
 
-    @Volatile
-    private var webSocket: WebSocket? = null
-
-    @Volatile
-    private var connected: Boolean = false
-
-    @Volatile
-    private var connecting: Boolean = false
+    @Volatile private var webSocket: WebSocket? = null
+    @Volatile private var connected: Boolean = false
+    @Volatile private var connecting: Boolean = false
 
     @Volatile
     var sessionId: String = ""
@@ -52,11 +47,11 @@ class XiaozhiWebSocketClient @Inject constructor(
         onEvent: (XiaozhiWebSocketEvent) -> Unit,
     ): Boolean = withContext(Dispatchers.IO) {
         if (isConnected()) {
-            onEvent(XiaozhiWebSocketEvent.Log("WebSocket 已连接，无需重复连接"))
+            onEvent(XiaozhiWebSocketEvent.Log("真实 WebSocket 已连接，无需重复连接"))
             return@withContext true
         }
         if (connecting) {
-            onEvent(XiaozhiWebSocketEvent.Log("WebSocket 正在连接中"))
+            onEvent(XiaozhiWebSocketEvent.Log("真实 WebSocket 正在连接中"))
             return@withContext false
         }
         validate(config)
@@ -125,7 +120,7 @@ class XiaozhiWebSocketClient @Inject constructor(
                 val message = listOf(status, t.message ?: t::class.java.simpleName)
                     .filter { it.isNotBlank() }
                     .joinToString("：")
-                onEvent(XiaozhiWebSocketEvent.Error("WebSocket 连接失败：$message"))
+                onEvent(XiaozhiWebSocketEvent.Error("真实 WebSocket 连接失败：$message"))
                 if (!helloReceived.isCompleted) helloReceived.complete(false)
             }
         }
@@ -137,7 +132,7 @@ class XiaozhiWebSocketClient @Inject constructor(
             if (!success) close("hello_failed")
             success
         } catch (_: TimeoutCancellationException) {
-            onEvent(XiaozhiWebSocketEvent.Error("等待服务端 hello 超时"))
+            onEvent(XiaozhiWebSocketEvent.Error("等待真实服务端 hello 超时"))
             close("hello_timeout")
             false
         } finally {
@@ -165,6 +160,14 @@ class XiaozhiWebSocketClient @Inject constructor(
         val currentSession = sessionId
         if (currentSession.isBlank()) return false
         val payload = messageBuilder.stopListening(currentSession)
+        onEvent(XiaozhiWebSocketEvent.OutgoingText(payload))
+        return sendSessionPayload(payload)
+    }
+
+    fun sendMcpResponse(responseJson: String, onEvent: (XiaozhiWebSocketEvent) -> Unit = {}): Boolean {
+        val currentSession = sessionId
+        if (currentSession.isBlank()) return false
+        val payload = messageBuilder.mcp(currentSession, responseJson)
         onEvent(XiaozhiWebSocketEvent.OutgoingText(payload))
         return sendSessionPayload(payload)
     }
