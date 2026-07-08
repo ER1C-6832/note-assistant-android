@@ -1,20 +1,56 @@
 package com.er1cmo.noteassistant.assistant.runtime.mcp
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class McpProtocolClientTest {
     private val client = McpProtocolClient()
 
     @Test
-    fun noteMutationToolsAreBlockedInPhase3() {
-        val result = client.handleToolCall("notes.delete", "{\"note_id\":1}")
-        assertEquals(McpToolStatus.Blocked, result.status)
+    fun toolsListReturnsPhase3SafeToolsOnly() {
+        val response = client.handleJsonRpc("{\"jsonrpc\":\"2.0\",\"id\":\"1\",\"method\":\"tools/list\",\"params\":{}}")
+
+        assertEquals(McpToolStatus.Success, response.status)
+        assertFalse(response.blocked)
+        assertTrue(response.responseJson.contains("phase3.echo"))
+        assertTrue(response.responseJson.contains("phase3.status"))
+        assertFalse(response.responseJson.contains("notes.delete"))
     }
 
     @Test
-    fun phase3EchoToolSucceedsWithoutNotes() {
-        val result = client.handleToolCall("phase3.echo", "{\"text\":\"hello\"}")
-        assertEquals(McpToolStatus.Success, result.status)
+    fun notesMutationToolCallIsBlocked() {
+        val response = client.handleJsonRpc(
+            "{\"jsonrpc\":\"2.0\",\"id\":\"2\",\"method\":\"tools/call\",\"params\":{\"name\":\"notes.delete\",\"arguments\":{\"note_id\":1}}}",
+        )
+
+        assertEquals(McpToolStatus.Blocked, response.status)
+        assertTrue(response.blocked)
+        assertEquals("notes.delete", response.toolName)
+        assertTrue(response.responseJson.contains("\"blocked\":true"))
+        assertTrue(response.responseJson.contains("\"note_mutation_enabled\":false"))
+    }
+
+    @Test
+    fun tagsMutationToolCallIsBlocked() {
+        val response = client.handleJsonRpc(
+            "{\"jsonrpc\":\"2.0\",\"id\":\"3\",\"method\":\"tools/call\",\"params\":{\"name\":\"tags.delete\",\"arguments\":{\"tag_id\":1}}}",
+        )
+
+        assertEquals(McpToolStatus.Blocked, response.status)
+        assertTrue(response.blocked)
+        assertEquals("tags.delete", response.toolName)
+    }
+
+    @Test
+    fun phase3StatusToolSucceedsWithoutNotes() {
+        val response = client.handleJsonRpc(
+            "{\"jsonrpc\":\"2.0\",\"id\":\"4\",\"method\":\"tools/call\",\"params\":{\"name\":\"phase3.status\",\"arguments\":{}}}",
+        )
+
+        assertEquals(McpToolStatus.Success, response.status)
+        assertFalse(response.blocked)
+        assertTrue(response.responseJson.contains("\"note_mutation_enabled\":false"))
     }
 }

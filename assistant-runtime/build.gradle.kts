@@ -36,4 +36,5 @@ dependencies {
     implementation(libs.okhttp)
 
     testImplementation(libs.junit)
+    testImplementation("org.json:json:20240303")
 }

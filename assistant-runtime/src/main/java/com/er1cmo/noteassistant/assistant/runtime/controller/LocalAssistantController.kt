@@ -5,7 +5,6 @@ import com.er1cmo.noteassistant.assistant.runtime.activation.OtaActivationClient
 import com.er1cmo.noteassistant.assistant.runtime.activation.OtaActivationState
 import com.er1cmo.noteassistant.assistant.runtime.conversation.ConversationStateMachine
 import com.er1cmo.noteassistant.assistant.runtime.identity.DeviceIdentityManager
-import com.er1cmo.noteassistant.assistant.runtime.mcp.McpProtocolClient
 import com.er1cmo.noteassistant.assistant.runtime.network.FakeXiaozhiWebSocketClient
 import com.er1cmo.noteassistant.assistant.runtime.network.XiaozhiConnectionConfig
 import com.er1cmo.noteassistant.assistant.runtime.protocol.ProtocolEvent
@@ -30,7 +29,6 @@ import kotlinx.coroutines.launch
 class LocalAssistantController @Inject constructor(
     private val settingsRepository: SettingsRepository,
     private val stateMachine: ConversationStateMachine,
-    private val mcpProtocolClient: McpProtocolClient,
     private val deviceIdentityManager: DeviceIdentityManager,
     private val otaActivationClient: OtaActivationClient,
     private val fakeWebSocketClient: FakeXiaozhiWebSocketClient,
@@ -184,11 +182,22 @@ class LocalAssistantController @Inject constructor(
     }
 
     override suspend fun simulateIncomingToolCall(toolName: String, argumentsJson: String) {
-        val result = mcpProtocolClient.handleToolCall(toolName, argumentsJson)
+        if (!mutableState.value.isConnected) connect()
+        val turn = fakeWebSocketClient.simulateIncomingToolCall(toolName = toolName, argumentsJson = argumentsJson)
+        val statusText = when (val event = turn.event) {
+            is ProtocolEvent.McpResponse -> if (event.blocked) {
+                "MCP tools/call 已安全阻断：${event.toolName ?: toolName}"
+            } else {
+                "MCP tools/call 已处理：${event.toolName ?: toolName}"
+            }
+            else -> "MCP tools/call 模拟失败：${turn.message}"
+        }
         mutableState.value = mutableState.value.copy(
-            lastAssistantText = result.message,
-            statusText = "已阻断或处理工具调用：${result.toolName}",
-            lastProtocolEvent = "ToolCallBlocked",
+            lastAssistantText = turn.message,
+            statusText = statusText,
+            lastClientJson = turn.outgoingResponseJson,
+            lastServerJson = turn.incomingJson,
+            lastProtocolEvent = turn.event.javaClass.simpleName,
             lastEventAt = nowMillis(),
         )
     }

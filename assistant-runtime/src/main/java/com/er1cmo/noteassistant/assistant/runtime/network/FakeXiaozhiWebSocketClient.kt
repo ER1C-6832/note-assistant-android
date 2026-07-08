@@ -66,6 +66,52 @@ class FakeXiaozhiWebSocketClient @Inject constructor(
         )
     }
 
+    suspend fun simulateIncomingToolsListRequest(): FakeWebSocketMcpTurn {
+        val payloadJson = "{\"jsonrpc\":\"2.0\",\"id\":\"phase3-tools-list\",\"method\":\"tools/list\",\"params\":{}}"
+        return simulateIncomingMcpRequest(payloadJson)
+    }
+
+    suspend fun simulateIncomingToolCall(
+        toolName: String,
+        argumentsJson: String,
+    ): FakeWebSocketMcpTurn {
+        val payloadJson = "{\"jsonrpc\":\"2.0\",\"id\":\"phase3-tools-call\",\"method\":\"tools/call\",\"params\":{\"name\":\"${toolName.escapeJson()}\",\"arguments\":${argumentsJson.ifBlank { "{}" }}}}"
+        return simulateIncomingMcpRequest(payloadJson)
+    }
+
+    suspend fun simulateIncomingMcpRequest(payloadJson: String): FakeWebSocketMcpTurn {
+        val currentSession = sessionId
+        if (!connected || currentSession.isNullOrBlank()) {
+            return FakeWebSocketMcpTurn(
+                success = false,
+                incomingJson = null,
+                outgoingResponseJson = null,
+                event = ProtocolEvent.Error("Fake WebSocket 未连接"),
+                message = "Fake WebSocket 未连接，无法模拟 MCP 请求",
+            )
+        }
+        delay(60)
+        val incoming = "{\"session_id\":\"$currentSession\",\"type\":\"mcp\",\"payload\":$payloadJson}"
+        val event = messageRouter.routeText(incoming)
+        val responseJson = if (event is ProtocolEvent.McpResponse) {
+            messageBuilder.mcp(currentSession, event.responseJson)
+        } else {
+            null
+        }
+        val message = when (event) {
+            is ProtocolEvent.McpResponse -> event.message
+            is ProtocolEvent.ProtocolError -> "MCP 协议错误：${event.reason}"
+            else -> "MCP 请求未产生响应事件：${event.javaClass.simpleName}"
+        }
+        return FakeWebSocketMcpTurn(
+            success = event is ProtocolEvent.McpResponse,
+            incomingJson = incoming,
+            outgoingResponseJson = responseJson,
+            event = event,
+            message = message,
+        )
+    }
+
     fun close(reason: String = "fake_close"): XiaozhiWebSocketEvent.Closed {
         connected = false
         sessionId = null
@@ -86,6 +132,14 @@ data class FakeWebSocketTextTurn(
     val success: Boolean,
     val outgoingJson: String?,
     val incomingJson: String?,
+    val event: ProtocolEvent,
+    val message: String,
+)
+
+data class FakeWebSocketMcpTurn(
+    val success: Boolean,
+    val incomingJson: String?,
+    val outgoingResponseJson: String?,
     val event: ProtocolEvent,
     val message: String,
 )

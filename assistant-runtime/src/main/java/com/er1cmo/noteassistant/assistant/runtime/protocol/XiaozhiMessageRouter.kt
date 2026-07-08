@@ -2,57 +2,48 @@ package com.er1cmo.noteassistant.assistant.runtime.protocol
 
 import com.er1cmo.noteassistant.assistant.runtime.mcp.McpProtocolClient
 import javax.inject.Inject
+import org.json.JSONObject
 
 class XiaozhiMessageRouter @Inject constructor(
     private val mcpProtocolClient: McpProtocolClient,
 ) {
     fun routeText(raw: String): ProtocolEvent {
-        val type = raw.jsonString("type") ?: return ProtocolEvent.ProtocolError(raw, "missing type")
-        val sessionId = raw.jsonString("session_id")
+        val json = runCatching { JSONObject(raw) }.getOrNull()
+            ?: return ProtocolEvent.ProtocolError(raw, "invalid_json")
+        val type = json.optString("type").ifBlank {
+            if (json.optString("method").isNotBlank()) "mcp" else ""
+        }
+        if (type.isBlank()) return ProtocolEvent.ProtocolError(raw, "missing type")
+        val sessionId = json.optString("session_id").ifBlank { null }
         return when (type) {
-            "hello" -> ProtocolEvent.Connected(sessionId ?: "")
-            "tts" -> ProtocolEvent.TtsState(state = raw.jsonString("state") ?: "unknown", sessionId = sessionId)
-            "listen" -> ProtocolEvent.ListenState(state = raw.jsonString("state") ?: "unknown", sessionId = sessionId)
-            "mcp" -> routeMcp(raw, sessionId)
-            "stt", "llm", "text" -> ProtocolEvent.AssistantText(text = raw.jsonString("text") ?: raw, sessionId = sessionId)
+            "hello" -> ProtocolEvent.Connected(sessionId.orEmpty())
+            "tts" -> ProtocolEvent.TtsState(state = json.optString("state", "unknown"), sessionId = sessionId)
+            "listen" -> ProtocolEvent.ListenState(state = json.optString("state", "unknown"), sessionId = sessionId)
+            "mcp" -> routeMcp(json, sessionId)
+            "stt", "llm", "text" -> ProtocolEvent.AssistantText(text = json.optString("text", raw), sessionId = sessionId)
             else -> ProtocolEvent.RawJson(type = type, json = raw, sessionId = sessionId)
         }
     }
 
     fun routeBinary(data: ByteArray): ProtocolEvent = ProtocolEvent.BinaryAudio(data)
 
-    private fun routeMcp(raw: String, sessionId: String?): ProtocolEvent {
-        val toolName = raw.jsonString("name") ?: raw.jsonString("tool") ?: raw.jsonString("tool_name")
-        if (toolName.isNullOrBlank()) return ProtocolEvent.RawJson(type = "mcp", json = raw, sessionId = sessionId)
-        val argumentsJson = raw.extractObjectAfter("arguments") ?: raw.extractObjectAfter("args") ?: "{}"
-        val result = mcpProtocolClient.handleToolCall(toolName = toolName, argumentsJson = argumentsJson)
-        return ProtocolEvent.ToolCall(
-            toolName = result.toolName,
-            argumentsJson = result.argumentsJson ?: argumentsJson,
+    private fun routeMcp(json: JSONObject, sessionId: String?): ProtocolEvent {
+        val payloadJson = when (val payload = json.opt("payload")) {
+            is JSONObject -> payload.toString()
+            is String -> payload.ifBlank { json.toString() }
+            else -> if (json.optString("method").isNotBlank()) json.toString() else null
+        } ?: return ProtocolEvent.ProtocolError(json.toString(), "missing mcp payload")
+
+        val response = mcpProtocolClient.handleJsonRpc(payloadJson)
+        return ProtocolEvent.McpResponse(
+            requestMethod = response.method,
+            requestIdJson = response.requestIdJson,
+            toolName = response.toolName,
+            status = response.status,
+            blocked = response.blocked,
+            message = response.message,
+            responseJson = response.responseJson,
             sessionId = sessionId,
         )
     }
-}
-
-private fun String.jsonString(key: String): String? {
-    val pattern = Regex("\\\"" + Regex.escape(key) + "\\\"\\s*:\\s*\\\"([^\\\"]*)\\\"")
-    return pattern.find(this)?.groupValues?.getOrNull(1)
-}
-
-private fun String.extractObjectAfter(key: String): String? {
-    val keyIndex = indexOf("\"$key\"")
-    if (keyIndex < 0) return null
-    val start = indexOf('{', keyIndex)
-    if (start < 0) return null
-    var depth = 0
-    for (index in start until length) {
-        when (this[index]) {
-            '{' -> depth += 1
-            '}' -> {
-                depth -= 1
-                if (depth == 0) return substring(start, index + 1)
-            }
-        }
-    }
-    return null
 }
