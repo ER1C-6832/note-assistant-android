@@ -2,7 +2,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
-    <!-- Phase 3/5 再按需请求 RECORD_AUDIO / FOREGROUND_SERVICE_MICROPHONE / POST_NOTIFICATIONS。 -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- Phase 5 再按需请求 FOREGROUND_SERVICE_MICROPHONE / POST_NOTIFICATIONS。 -->
 
     <application
         android:name=".NoteAssistantApp"

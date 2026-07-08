@@ -1,6 +1,10 @@
 package com.er1cmo.noteassistant.notes.ui.settings
 
+import android.Manifest
+import android.content.pm.PackageManager
 import android.graphics.Color as AndroidColor
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
@@ -30,8 +34,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -58,6 +64,24 @@ fun SettingsRoute(
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsState()
+    val context = LocalContext.current
+    val microphonePermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        viewModel.startFakePtt(hasRecordAudioPermission = granted)
+    }
+    val startPushToTalk: () -> Unit = {
+        val alreadyGranted = ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.RECORD_AUDIO,
+        ) == PackageManager.PERMISSION_GRANTED
+        if (alreadyGranted) {
+            viewModel.startFakePtt(hasRecordAudioPermission = true)
+        } else {
+            microphonePermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        }
+    }
+
     Surface(color = colorFromHex(state.homeBackgroundColor), modifier = Modifier.fillMaxSize()) {
         Column(
             modifier = Modifier
@@ -103,7 +127,7 @@ fun SettingsRoute(
                 onDisconnectClick = viewModel::disconnectAssistant,
                 onTextInputChange = viewModel::setAssistantTextInput,
                 onSendTextClick = viewModel::sendAssistantText,
-                onStartPttClick = viewModel::startFakePtt,
+                onStartPttClick = startPushToTalk,
                 onStopPttClick = viewModel::stopFakePtt,
                 onSimulateToolCallClick = viewModel::simulateBlockedNoteTool,
             )
@@ -261,8 +285,8 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch { assistantController.sendText(text) }
     }
 
-    fun startFakePtt() {
-        viewModelScope.launch { assistantController.startPushToTalk(hasRecordAudioPermission = true) }
+    fun startFakePtt(hasRecordAudioPermission: Boolean) {
+        viewModelScope.launch { assistantController.startPushToTalk(hasRecordAudioPermission = hasRecordAudioPermission) }
     }
 
     fun stopFakePtt() {
@@ -495,7 +519,7 @@ private fun Phase3RuntimeBox(
     ) {
         Text("Phase3 助手运行时", color = Color(0xFF222832), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
         Text(
-            "当前是 Fake Runtime + activation 验证入口：可生成设备身份、跑 fake activation，也可手动触发真实 OTA/activation；Phase3 不执行便签工具。",
+            "当前是 Fake Runtime + activation + WebSocket + MCP + PTT fake audio 验证入口；Phase3 不执行便签工具。",
             color = Color(0xFF697386),
             style = MaterialTheme.typography.bodySmall,
         )
@@ -508,6 +532,17 @@ private fun Phase3RuntimeBox(
         assistant.activationCode?.let { Text("activation_code=$it", color = Color(0xFF9A3412), style = MaterialTheme.typography.bodySmall) }
         assistant.sessionId?.let { Text("session=$it", color = Color(0xFF697386), style = MaterialTheme.typography.bodySmall) }
         assistant.lastAssistantText?.let { Text("last assistant=$it", color = Color(0xFF344054), style = MaterialTheme.typography.bodySmall) }
+        if (assistant.audioCapturedFrames > 0 || assistant.pushToTalkStopLatencyMs != null) {
+            Text(
+                "fake audio pcm=${assistant.audioCapturedFrames} · opus=${assistant.audioEncodedFrames} · uploaded=${assistant.audioUploadedFrames} · stop=${assistant.pushToTalkStopLatencyMs ?: "-"}ms",
+                color = Color(0xFF344054),
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+        assistant.lastAudioSummary?.let { Text("audio=$it", color = Color(0xFF697386), style = MaterialTheme.typography.bodySmall) }
+        assistant.lastProtocolEvent?.let { Text("event=$it", color = Color(0xFF697386), style = MaterialTheme.typography.bodySmall) }
+        assistant.lastClientJson?.let { Text("last client=${it.take(180)}", color = Color(0xFF697386), style = MaterialTheme.typography.bodySmall) }
+        assistant.lastServerJson?.let { Text("last server=${it.take(180)}", color = Color(0xFF697386), style = MaterialTheme.typography.bodySmall) }
 
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = onEnableClick, shape = RoundedCornerShape(14.dp), modifier = Modifier.weight(1f)) { Text("启用助手") }
@@ -535,7 +570,7 @@ private fun Phase3RuntimeBox(
         )
         Button(onClick = onSendTextClick, shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth()) { Text("发送文本到 Fake Runtime") }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = onStartPttClick, shape = RoundedCornerShape(14.dp), modifier = Modifier.weight(1f)) { Text("开始 PTT") }
+            Button(onClick = onStartPttClick, shape = RoundedCornerShape(14.dp), modifier = Modifier.weight(1f)) { Text("开始 PTT（请求麦克风）") }
             Button(onClick = onStopPttClick, shape = RoundedCornerShape(14.dp), modifier = Modifier.weight(1f)) { Text("结束 PTT") }
         }
         Button(
