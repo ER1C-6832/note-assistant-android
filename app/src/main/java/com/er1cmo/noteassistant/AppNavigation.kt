@@ -10,6 +10,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.navigation.NavController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -36,6 +37,11 @@ fun AppNavigation(
                 is UiCommand.OpenNote -> navController.navigate(AppRoute.Detail.createRoute(command.noteId))
                 is UiCommand.ShowMessage -> Unit
                 is UiCommand.ShowConfirmation -> pendingConfirmationDialog = command
+                is UiCommand.ShowSearch -> navController.navigateToNotesRoot()
+                is UiCommand.ShowTag -> navController.navigateToNotesRoot()
+                UiCommand.ShowNoteList -> navController.navigateToNotesRoot()
+                UiCommand.ShowArchive -> navController.navigateToNotesRoot()
+                UiCommand.ShowTrash -> navController.navigateToNotesRoot()
             }
         }
     }
@@ -132,6 +138,17 @@ fun AppNavigation(
         }
         composable(AppRoute.Settings.route) {
             SettingsRoute(onBackClick = { navController.popBackStack() })
+        }
+    }
+}
+
+private fun NavController.navigateToNotesRoot() {
+    navigate(AppRoute.Notes.route) {
+        launchSingleTop = true
+        restoreState = true
+        popUpTo(AppRoute.Notes.route) {
+            inclusive = false
+            saveState = true
         }
     }
 }
