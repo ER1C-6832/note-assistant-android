@@ -10,6 +10,9 @@ data class McpToolResult(
     val risk: McpRiskLevel = McpRiskLevel.Low,
     val requiresConfirmation: Boolean = false,
     val confirmationId: String? = null,
+    val confirmationSummary: String? = null,
+    val confirmationPreviewJson: String? = null,
+    val expiresAt: Long? = null,
     val commandLogId: Long? = null,
     val affectedNoteIds: List<Long> = emptyList(),
     val affectedTagIds: List<Long> = emptyList(),
@@ -34,6 +37,9 @@ data class McpToolResult(
         toolName?.let { envelope.put("tool_name", it) }
         argumentsJson?.let { envelope.put("arguments", it.toJsonObjectOrArrayOrString()) }
         errorCode?.let { envelope.put("error_code", it) }
+        confirmationSummary?.let { envelope.put("confirmation_summary", it) }
+        confirmationPreviewJson?.let { envelope.put("confirmation_preview", it.toJsonObjectOrArrayOrString()) }
+        expiresAt?.let { envelope.put("expires_at", it) }
         return envelope
     }
 
@@ -60,7 +66,8 @@ data class McpToolResult(
         fun failed(
             message: String,
             toolName: String? = null,
-            errorCode: String? = null,
+            argumentsJson: String? = null,
+            errorCode: String? = ERROR_VALIDATION,
             risk: McpRiskLevel = McpRiskLevel.High,
         ): McpToolResult = McpToolResult(
             status = McpToolStatus.Failed.storageValue,
@@ -68,6 +75,19 @@ data class McpToolResult(
             risk = risk,
             errorCode = errorCode,
             toolName = toolName,
+            argumentsJson = argumentsJson,
+        )
+
+        fun invalidJson(
+            toolName: String? = null,
+            argumentsJson: String? = null,
+            message: String = "参数不是有效 JSON",
+        ): McpToolResult = failed(
+            message = message,
+            toolName = toolName,
+            argumentsJson = argumentsJson,
+            errorCode = ERROR_INVALID_JSON,
+            risk = McpRiskLevel.High,
         )
 
         fun blocked(
@@ -75,6 +95,7 @@ data class McpToolResult(
             message: String,
             argumentsJson: String? = null,
             resultJson: String? = null,
+            errorCode: String? = ERROR_EXECUTOR_UNAVAILABLE,
         ): McpToolResult = McpToolResult(
             status = McpToolStatus.Blocked.storageValue,
             message = message,
@@ -85,6 +106,7 @@ data class McpToolResult(
             risk = McpRiskLevel.High,
             toolName = toolName,
             argumentsJson = argumentsJson,
+            errorCode = errorCode,
         )
 
         fun notImplemented(
@@ -101,6 +123,7 @@ data class McpToolResult(
             risk = McpRiskLevel.Low,
             toolName = toolName,
             argumentsJson = argumentsJson,
+            errorCode = ERROR_UNSUPPORTED_TOOL,
         )
 
         fun requiresConfirmation(
@@ -111,6 +134,9 @@ data class McpToolResult(
             commandLogId: Long? = null,
             affectedNoteIds: List<Long> = emptyList(),
             affectedTagIds: List<Long> = emptyList(),
+            summary: String? = null,
+            previewJson: String? = null,
+            expiresAt: Long? = null,
         ): McpToolResult = McpToolResult(
             status = McpToolStatus.RequiresConfirmation.storageValue,
             message = message,
@@ -118,11 +144,21 @@ data class McpToolResult(
             risk = McpRiskLevel.High,
             requiresConfirmation = true,
             confirmationId = confirmationId,
+            confirmationSummary = summary,
+            confirmationPreviewJson = previewJson,
+            expiresAt = expiresAt,
             commandLogId = commandLogId,
             affectedNoteIds = affectedNoteIds,
             affectedTagIds = affectedTagIds,
             toolName = toolName,
+            errorCode = ERROR_REQUIRES_CONFIRMATION,
         )
+
+        const val ERROR_INVALID_JSON = "invalid_json"
+        const val ERROR_VALIDATION = "validation_error"
+        const val ERROR_EXECUTOR_UNAVAILABLE = "executor_unavailable"
+        const val ERROR_UNSUPPORTED_TOOL = "unsupported_tool"
+        const val ERROR_REQUIRES_CONFIRMATION = "requires_confirmation"
     }
 }
 

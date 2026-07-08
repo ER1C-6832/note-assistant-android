@@ -14,7 +14,7 @@ interface McpTool {
             confirmation = if (riskLevel == McpRiskLevel.High) {
                 McpToolDescriptor.CONFIRMATION_REQUIRED
             } else {
-                McpToolDescriptor.CONFIRMATION_NOT_REQUIRED
+                McpToolDescriptor.CONFIRMATION_NOT_REQUIRED_BY_DEFAULT
             },
         )
 

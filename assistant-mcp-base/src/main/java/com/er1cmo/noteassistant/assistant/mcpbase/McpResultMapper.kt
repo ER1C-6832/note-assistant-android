@@ -28,7 +28,7 @@ object McpResultMapper {
                 "result",
                 JSONObject()
                     .put("content", content)
-                    .put("isError", result.statusEnum != McpToolStatus.Success)
+                    .put("isError", result.statusEnum.isJsonRpcError)
                     .put("structuredContent", envelope),
             )
             .toString()
@@ -37,7 +37,7 @@ object McpResultMapper {
     fun errorResponse(
         requestIdJson: String?,
         message: String,
-        code: Int = -32601,
+        code: Int = ERROR_METHOD_NOT_FOUND,
         data: JSONObject = JSONObject(),
     ): String = JSONObject()
         .put("jsonrpc", "2.0")
@@ -50,6 +50,11 @@ object McpResultMapper {
                 .put("data", data),
         )
         .toString()
+
+    const val ERROR_PARSE = -32700
+    const val ERROR_INVALID_REQUEST = -32600
+    const val ERROR_METHOD_NOT_FOUND = -32601
+    const val ERROR_INVALID_PARAMS = -32602
 }
 
 fun JSONObject.requestIdJson(): String? {

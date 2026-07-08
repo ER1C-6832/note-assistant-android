@@ -30,4 +30,7 @@ kapt {
 dependencies {
     implementation(libs.hilt.android)
     kapt(libs.hilt.compiler)
+
+    testImplementation(libs.junit)
+    testImplementation("org.json:json:20240303")
 }

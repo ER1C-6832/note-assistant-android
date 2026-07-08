@@ -5,6 +5,7 @@ data class McpToolContext(
     val runtimeMode: String? = null,
     val conversationId: String? = null,
     val sessionId: String? = null,
+    val requestIdJson: String? = null,
 ) {
     companion object {
         const val SOURCE_VOICE = "voice"

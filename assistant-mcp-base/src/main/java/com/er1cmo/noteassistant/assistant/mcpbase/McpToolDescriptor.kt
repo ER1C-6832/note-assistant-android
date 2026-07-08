@@ -1,5 +1,6 @@
 package com.er1cmo.noteassistant.assistant.mcpbase
 
+import org.json.JSONArray
 import org.json.JSONObject
 
 data class McpToolDescriptor(
@@ -22,11 +23,12 @@ data class McpToolDescriptor(
             .put("risk", riskLevel.storageValue)
             .put("mutates", mutates)
             .put("confirmation", confirmation)
-            .put("examples", examples)
+            .put("examples", JSONArray(examples))
     }
 
     companion object {
         const val CONFIRMATION_NOT_REQUIRED = "not_required"
+        const val CONFIRMATION_NOT_REQUIRED_BY_DEFAULT = "not_required_by_default"
         const val CONFIRMATION_MAY_BE_REQUIRED = "may_be_required"
         const val CONFIRMATION_REQUIRED = "required"
         const val DEFAULT_OBJECT_SCHEMA = "{\"type\":\"object\",\"additionalProperties\":true}"

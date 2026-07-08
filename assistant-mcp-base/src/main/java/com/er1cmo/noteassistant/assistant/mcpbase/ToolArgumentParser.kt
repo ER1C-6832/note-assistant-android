@@ -20,37 +20,40 @@ class ToolArgumentParser(private val json: JSONObject) {
 
     fun optionalLong(name: String): Long? = if (json.has(name) && !json.isNull(name)) json.optLong(name) else null
 
+    fun requireLongList(name: String): List<Long> {
+        val values = longList(name)
+        require(values.isNotEmpty()) { "缺少必填参数：$name" }
+        return values
+    }
+
     fun boolean(name: String, fallback: Boolean = false): Boolean = json.optBoolean(name, fallback)
 
     fun int(name: String, fallback: Int = 0): Int = json.optInt(name, fallback)
 
     fun stringList(name: String): List<String> {
         val array = json.optJSONArray(name) ?: return emptyList()
-        return buildList {
-            for (index in 0 until array.length()) {
-                val value = array.optString(index).trim()
-                if (value.isNotBlank()) add(value)
-            }
+        val values = mutableListOf<String>()
+        for (index in 0 until array.length()) {
+            val value = array.optString(index).trim()
+            if (value.isNotBlank()) values.add(value)
         }
+        return values
     }
 
     fun longList(name: String): List<Long> {
         val array = json.optJSONArray(name) ?: return emptyList()
-        return buildList {
-            for (index in 0 until array.length()) {
-                val value = array.optLong(index)
-                if (value > 0L) add(value)
-            }
+        val values = mutableListOf<Long>()
+        for (index in 0 until array.length()) {
+            val value = array.optLong(index)
+            if (value > 0L) values.add(value)
         }
+        return values
     }
 
     fun raw(): JSONObject = json
 
     companion object {
-        fun parse(argumentsJson: String): Result<ToolArgumentParser> = runCatching {
-            val trimmed = argumentsJson.trim().ifBlank { "{}" }
-            ToolArgumentParser(JSONObject(trimmed))
-        }
+        fun parse(argumentsJson: String): Result<ToolArgumentParser> = parseObject(argumentsJson).map { ToolArgumentParser(it) }
 
         fun parseObject(argumentsJson: String): Result<JSONObject> = runCatching {
             JSONObject(argumentsJson.trim().ifBlank { "{}" })

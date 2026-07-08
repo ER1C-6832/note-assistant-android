@@ -23,5 +23,6 @@ class FailClosedMcpToolExecutor : McpToolExecutor {
         toolName = name,
         message = "MCP tool executor 尚未注入；Phase4 fail-closed，未修改任何便签。",
         argumentsJson = argumentsJson,
+        errorCode = McpToolResult.ERROR_EXECUTOR_UNAVAILABLE,
     )
 }
