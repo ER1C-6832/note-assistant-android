@@ -17,6 +17,7 @@ interface AssistantController {
     suspend fun startPushToTalk(hasRecordAudioPermission: Boolean)
     suspend fun stopPushToTalk()
     suspend fun simulateIncomingToolCall(toolName: String, argumentsJson: String = "{}")
+    suspend fun simulateIncomingToolsList()
 
     suspend fun ensureDeviceIdentity()
     suspend fun resetDeviceIdentity()

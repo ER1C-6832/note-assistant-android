@@ -489,11 +489,24 @@ class LocalAssistantController @Inject constructor(
     }
 
     override suspend fun simulateIncomingToolCall(toolName: String, argumentsJson: String) {
-        if (!mutableState.value.isConnected) connectFake()
+        if (!fakeWebSocketClient.isConnected()) connectFake()
         val turn = fakeWebSocketClient.simulateIncomingToolCall(toolName, argumentsJson)
         mutableState.value = mutableState.value.copy(
             lastAssistantText = turn.message,
             statusText = if (turn.success) "MCP tools/call 已安全处理：$toolName" else turn.message,
+            lastServerJson = turn.incomingJson,
+            lastClientJson = turn.outgoingResponseJson,
+            lastProtocolEvent = turn.event.javaClass.simpleName,
+            lastEventAt = nowMillis(),
+        )
+    }
+
+    override suspend fun simulateIncomingToolsList() {
+        if (!fakeWebSocketClient.isConnected()) connectFake()
+        val turn = fakeWebSocketClient.simulateIncomingToolsListRequest()
+        mutableState.value = mutableState.value.copy(
+            lastAssistantText = turn.message,
+            statusText = if (turn.success) "Phase4 MCP tools/list 已通过 runtime executor 返回 descriptors" else turn.message,
             lastServerJson = turn.incomingJson,
             lastClientJson = turn.outgoingResponseJson,
             lastProtocolEvent = turn.event.javaClass.simpleName,

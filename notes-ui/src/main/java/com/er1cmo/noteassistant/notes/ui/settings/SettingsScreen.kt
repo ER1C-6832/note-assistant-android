@@ -93,7 +93,7 @@ fun SettingsRoute(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text("小泓便签", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                    Text("设置 / Phase2 调试 / Phase3 助手运行时", style = MaterialTheme.typography.bodySmall, color = Color(0xFF697386))
+                    Text("设置 / Phase2 调试 / Phase3+Phase4 MCP 调试", style = MaterialTheme.typography.bodySmall, color = Color(0xFF697386))
                 }
                 StatusPill(text = "本地优先")
             }
@@ -114,7 +114,7 @@ fun SettingsRoute(
                 onSelect = viewModel::setTagDrawerBackgroundColor,
             )
 
-            SectionTitle("Phase3 助手运行时")
+            SectionTitle("Phase3/Phase4 助手运行时")
             Phase3RuntimeBox(
                 state = state,
                 onEnableClick = viewModel::enableAssistant,
@@ -133,6 +133,11 @@ fun SettingsRoute(
                 onStartPttClick = startPushToTalk,
                 onStopPttClick = viewModel::stopPtt,
                 onSimulateToolCallClick = viewModel::simulateBlockedNoteTool,
+                onPhase4ToolNameChange = viewModel::setPhase4ToolName,
+                onPhase4ArgumentsChange = viewModel::setPhase4ArgumentsJson,
+                onPhase4SampleClick = viewModel::applyPhase4Sample,
+                onListPhase4ToolsClick = viewModel::listPhase4Tools,
+                onExecutePhase4ToolClick = viewModel::executePhase4McpTool,
                 onSimulateCloseClick = viewModel::simulateConnectionClosed,
                 onSimulateFailureClick = viewModel::simulateConnectionFailure,
                 onSimulateAudioFailureClick = viewModel::simulateAudioFailure,
@@ -178,6 +183,8 @@ class SettingsViewModel @Inject constructor(
     private val revisionToRestoreId = MutableStateFlow("")
     private val revisionText = MutableStateFlow("输入 note_id 后点击刷新 revision。")
     private val assistantTextInput = MutableStateFlow("你好，请简单介绍一下自己")
+    private val phase4ToolName = MutableStateFlow("notes.create")
+    private val phase4ArgumentsJson = MutableStateFlow("{\"title\":\"Phase4 MCP 创建\",\"content\":\"从 runtime MCP executor 创建\",\"type\":\"normal\",\"tags\":[\"Phase4\"]}")
 
     private data class ThemeState(val home: String, val tagDrawer: String)
     private data class SimulatorState(
@@ -188,7 +195,12 @@ class SettingsViewModel @Inject constructor(
         val pendingConfirmationId: String?,
     )
     private data class RevisionState(val noteId: String, val revisionId: String, val text: String)
-    private data class AssistantPanelState(val assistantState: AssistantState, val textInput: String)
+    private data class AssistantPanelState(
+        val assistantState: AssistantState,
+        val textInput: String,
+        val phase4ToolName: String,
+        val phase4ArgumentsJson: String,
+    )
 
     private val themeState = combine(
         settingsRepository.homeBackgroundColor,
@@ -203,8 +215,18 @@ class SettingsViewModel @Inject constructor(
         RevisionState(noteId = noteId, revisionId = revisionId, text = text)
     }
 
-    private val assistantPanelState = combine(assistantController.state, assistantTextInput) { assistantState, input ->
-        AssistantPanelState(assistantState = assistantState, textInput = input)
+    private val assistantPanelState = combine(
+        assistantController.state,
+        assistantTextInput,
+        phase4ToolName,
+        phase4ArgumentsJson,
+    ) { assistantState, input, toolName, arguments ->
+        AssistantPanelState(
+            assistantState = assistantState,
+            textInput = input,
+            phase4ToolName = toolName,
+            phase4ArgumentsJson = arguments,
+        )
     }
 
     val state = combine(
@@ -227,6 +249,8 @@ class SettingsViewModel @Inject constructor(
             revisionText = revision.text,
             assistantState = assistant.assistantState,
             assistantTextInput = assistant.textInput,
+            phase4ToolName = assistant.phase4ToolName,
+            phase4ArgumentsJson = assistant.phase4ArgumentsJson,
             recentLogs = logs,
         )
     }.stateIn(
@@ -238,6 +262,8 @@ class SettingsViewModel @Inject constructor(
     fun setHomeBackgroundColor(hex: String) { viewModelScope.launch { settingsRepository.setHomeBackgroundColor(hex) } }
     fun setTagDrawerBackgroundColor(hex: String) { viewModelScope.launch { settingsRepository.setTagDrawerBackgroundColor(hex) } }
     fun setAssistantTextInput(value: String) { assistantTextInput.value = value }
+    fun setPhase4ToolName(value: String) { phase4ToolName.value = value }
+    fun setPhase4ArgumentsJson(value: String) { phase4ArgumentsJson.value = value }
     fun enableAssistant() { viewModelScope.launch { assistantController.enableAssistant() } }
     fun disableAssistant() { viewModelScope.launch { assistantController.disableAssistant() } }
     fun prepareDeviceIdentity() { viewModelScope.launch { assistantController.ensureDeviceIdentity() } }
@@ -256,6 +282,19 @@ class SettingsViewModel @Inject constructor(
     fun simulateConnectionClosed() { viewModelScope.launch { assistantController.simulateConnectionClosed(code = 1006, reason = "settings_debug_abnormal_close") } }
     fun simulateConnectionFailure() { viewModelScope.launch { assistantController.simulateConnectionFailure("settings_debug_transport_failure") } }
     fun simulateAudioFailure() { viewModelScope.launch { assistantController.simulateAudioFailure("settings_debug_audio_failure") } }
+    fun listPhase4Tools() { viewModelScope.launch { assistantController.simulateIncomingToolsList() } }
+    fun executePhase4McpTool() {
+        viewModelScope.launch {
+            assistantController.simulateIncomingToolCall(
+                toolName = phase4ToolName.value.trim(),
+                argumentsJson = phase4ArgumentsJson.value,
+            )
+        }
+    }
+    fun applyPhase4Sample(sample: ToolSample) {
+        phase4ToolName.value = sample.toolName
+        phase4ArgumentsJson.value = sample.argumentsJson
+    }
 
     fun setToolName(value: String) { toolName.value = value }
     fun setArgumentsJson(value: String) { argumentsJson.value = value }
@@ -418,6 +457,8 @@ data class SettingsUiState(
     val revisionText: String = "输入 note_id 后点击刷新 revision。",
     val assistantState: AssistantState = AssistantState.disabled(),
     val assistantTextInput: String = "你好，请简单介绍一下自己",
+    val phase4ToolName: String = "notes.create",
+    val phase4ArgumentsJson: String = "{}",
     val recentLogs: List<AssistantCommandLog> = emptyList(),
 )
 
@@ -453,6 +494,11 @@ private fun Phase3RuntimeBox(
     onStartPttClick: () -> Unit,
     onStopPttClick: () -> Unit,
     onSimulateToolCallClick: () -> Unit,
+    onPhase4ToolNameChange: (String) -> Unit,
+    onPhase4ArgumentsChange: (String) -> Unit,
+    onPhase4SampleClick: (ToolSample) -> Unit,
+    onListPhase4ToolsClick: () -> Unit,
+    onExecutePhase4ToolClick: () -> Unit,
     onSimulateCloseClick: () -> Unit,
     onSimulateFailureClick: () -> Unit,
     onSimulateAudioFailureClick: () -> Unit,
@@ -462,8 +508,8 @@ private fun Phase3RuntimeBox(
         modifier = Modifier.fillMaxWidth().background(Color.White.copy(alpha = 0.92f), RoundedCornerShape(18.dp)).padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Text("Phase3 助手运行时", color = Color(0xFF222832), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-        Text("当前支持 Gate A Fake Runtime 与 Gate B Real Xiaozhi Runtime；Phase3 不执行便签工具。", color = Color(0xFF697386), style = MaterialTheme.typography.bodySmall)
+        Text("Phase3/Phase4 助手运行时", color = Color(0xFF222832), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+        Text("当前支持 Phase3 Fake/Real runtime；Phase4 MCP tools/call 通过 runtime executor 进入 assistant-tools。", color = Color(0xFF697386), style = MaterialTheme.typography.bodySmall)
         Text("mode=${assistant.runtimeMode.storageValue} · phase=${assistant.phase.storageValue} · connection=${assistant.connection.storageValue} · activation=${assistant.activation.storageValue} · audio=${assistant.audio.storageValue}", color = Color(0xFF344054), style = MaterialTheme.typography.bodySmall)
         Text("GateB real: handshake=${assistant.gateBRealHandshakeVerified} · text=${assistant.gateBRealTextVerified} · audio_up=${assistant.gateBRealAudioUploadVerified} · audio_play=${assistant.gateBRealAudioPlaybackVerified} · tool_block=${assistant.gateBRealToolCallBlockedVerified}", color = Color(0xFF344054), style = MaterialTheme.typography.bodySmall)
         Text("status=${assistant.statusText}", color = Color(0xFF344054), style = MaterialTheme.typography.bodySmall)
@@ -516,7 +562,26 @@ private fun Phase3RuntimeBox(
             Button(onClick = onSimulateFailureClick, shape = RoundedCornerShape(14.dp), modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFB42318))) { Text("模拟连接失败") }
         }
         Button(onClick = onSimulateAudioFailureClick, shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFB42318))) { Text("模拟音频失败") }
-        Button(onClick = onSimulateToolCallClick, shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626))) { Text("模拟 notes.delete 工具调用并阻断") }
+        Button(onClick = onSimulateToolCallClick, shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626))) { Text("旧入口：模拟 notes.delete MCP 调用") }
+
+        Column(modifier = Modifier.fillMaxWidth().background(Color(0xFFF8FAFC), RoundedCornerShape(16.dp)).padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Phase4 MCP 工具模拟器", color = Color(0xFF222832), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text("这里走 runtime MCP 链路：Fake runtime -> router -> McpProtocolClient -> McpToolExecutor -> assistant-tools。下面的 Phase2 模拟器不算 Phase4 MCP 验收。", color = Color(0xFF697386), style = MaterialTheme.typography.bodySmall)
+            Row(modifier = Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                phase4McpSamples.forEach { sample ->
+                    Surface(onClick = { onPhase4SampleClick(sample) }, shape = RoundedCornerShape(14.dp), color = Color.White, border = BorderStroke(1.dp, Color(0xFFE5E7EB))) {
+                        Text(sample.label, modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp), style = MaterialTheme.typography.labelMedium)
+                    }
+                }
+            }
+            OutlinedTextField(value = state.phase4ToolName, onValueChange = onPhase4ToolNameChange, label = { Text("Phase4 MCP tool name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(value = state.phase4ArgumentsJson, onValueChange = onPhase4ArgumentsChange, label = { Text("Phase4 MCP arguments JSON") }, minLines = 4, maxLines = 8, modifier = Modifier.fillMaxWidth())
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = onListPhase4ToolsClick, shape = RoundedCornerShape(14.dp), modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0F766E))) { Text("列出 Phase4 tools/list") }
+                Button(onClick = onExecutePhase4ToolClick, shape = RoundedCornerShape(14.dp), modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2563EB))) { Text("执行 Phase4 tools/call") }
+            }
+            Text("执行后看上方 last server / last client / last assistant，以及下方最近命令日志。", color = Color(0xFF697386), style = MaterialTheme.typography.bodySmall)
+        }
     }
 }
 
@@ -647,6 +712,15 @@ private val tagDrawerBackgroundOptions = listOf(
     ColorOption("浅绿", "#E4F6EC"),
     ColorOption("深色", "#1F2430"),
     ColorOption("黑色", "#000000"),
+)
+
+private val phase4McpSamples = listOf(
+    ToolSample("创建", "notes.create", "{\"title\":\"Phase4 MCP 创建\",\"content\":\"从 runtime MCP executor 创建\",\"type\":\"normal\",\"tags\":[\"Phase4\"]}"),
+    ToolSample("搜索", "notes.search", "{\"query\":\"Phase4\",\"limit\":10}"),
+    ToolSample("最近", "notes.list_recent", "{\"limit\":5,\"include_archived\":true}"),
+    ToolSample("获取", "notes.get", "{\"note_id\":1}"),
+    ToolSample("追加", "notes.append", "{\"note_id\":1,\"content\":\"Phase4 MCP 追加一行\"}"),
+    ToolSample("删除", "notes.delete", "{\"note_id\":1}"),
 )
 
 private val toolSamples = listOf(
