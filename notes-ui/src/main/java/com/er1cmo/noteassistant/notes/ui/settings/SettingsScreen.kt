@@ -45,12 +45,12 @@ import com.er1cmo.noteassistant.notes.domain.model.AssistantCommandLog
 import com.er1cmo.noteassistant.notes.domain.repository.CommandTraceRepository
 import com.er1cmo.noteassistant.notes.ui.components.StatusPill
 import dagger.hilt.android.lifecycle.HiltViewModel
+import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
-import javax.inject.Inject
 
 @Composable
 fun SettingsRoute(
@@ -69,14 +69,14 @@ fun SettingsRoute(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text("小泓便签", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                    Text("设置与开发调试", style = MaterialTheme.typography.bodySmall, color = Color(0xFF697386))
+                    Text("设置 / Phase2 调试 / Phase3 助手运行时", style = MaterialTheme.typography.bodySmall, color = Color(0xFF697386))
                 }
-                StatusPill(text = if (state.assistantState.assistantEnabled) "助手已启用" else "本地优先")
+                StatusPill(text = "本地优先")
             }
 
             SectionTitle("便签设置")
             SettingBox("数据库", "本地 SQLite note_assistant.db")
-            SettingBox("搜索模式", "手动搜索与命令搜索已逐步收口到 SearchNotesUseCase")
+            SettingBox("搜索模式", "手动搜索与命令搜索逐步收口到 SearchNotesUseCase")
             ColorSettingBox(
                 label = "主界面背景",
                 selectedHex = state.homeBackgroundColor,
@@ -91,17 +91,21 @@ fun SettingsRoute(
             )
 
             SectionTitle("Phase3 助手运行时")
-            AssistantRuntimeBox(
+            Phase3RuntimeBox(
                 state = state,
-                onTextChange = viewModel::setAssistantTextInput,
                 onEnableClick = viewModel::enableAssistant,
                 onDisableClick = viewModel::disableAssistant,
+                onPrepareIdentityClick = viewModel::prepareDeviceIdentity,
+                onResetIdentityClick = viewModel::resetDeviceIdentity,
+                onFakeActivationClick = viewModel::runFakeActivation,
+                onRealActivationClick = viewModel::runRealActivation,
                 onConnectClick = viewModel::connectAssistant,
                 onDisconnectClick = viewModel::disconnectAssistant,
+                onTextInputChange = viewModel::setAssistantTextInput,
                 onSendTextClick = viewModel::sendAssistantText,
-                onStartPttClick = viewModel::startFakePushToTalk,
-                onStopPttClick = viewModel::stopFakePushToTalk,
-                onBlockedToolClick = viewModel::simulateBlockedNoteTool,
+                onStartPttClick = viewModel::startFakePtt,
+                onStopPttClick = viewModel::stopFakePtt,
+                onSimulateToolCallClick = viewModel::simulateBlockedNoteTool,
             )
 
             SectionTitle("Phase2 命令与追溯调试")
@@ -143,8 +147,7 @@ class SettingsViewModel @Inject constructor(
     private val revisionNoteId = MutableStateFlow("")
     private val revisionToRestoreId = MutableStateFlow("")
     private val revisionText = MutableStateFlow("输入 note_id 后点击刷新 revision。")
-    private val assistantTextInput = MutableStateFlow("你好，做一次 Phase3 文本对话测试")
-    private val assistantBusy = MutableStateFlow(false)
+    private val assistantTextInput = MutableStateFlow("你好，请简单介绍一下自己")
 
     private data class ThemeState(val home: String, val tagDrawer: String)
     private data class SimulatorState(
@@ -160,13 +163,8 @@ class SettingsViewModel @Inject constructor(
         val text: String,
     )
     private data class AssistantPanelState(
+        val assistantState: AssistantState,
         val textInput: String,
-        val busy: Boolean,
-    )
-    private data class AssistantUiRuntimeState(
-        val runtime: AssistantState,
-        val textInput: String,
-        val busy: Boolean,
     )
 
     private val themeState = combine(
@@ -175,34 +173,24 @@ class SettingsViewModel @Inject constructor(
     ) { home, tagDrawer -> ThemeState(home = home, tagDrawer = tagDrawer) }
 
     private val simulatorState = combine(toolName, argumentsJson, isRunning, resultText, pendingConfirmationId) { tool, args, running, result, confirmationId ->
-        SimulatorState(
-            toolName = tool,
-            argumentsJson = args,
-            isRunning = running,
-            resultText = result,
-            pendingConfirmationId = confirmationId,
-        )
+        SimulatorState(toolName = tool, argumentsJson = args, isRunning = running, resultText = result, pendingConfirmationId = confirmationId)
     }
 
     private val revisionState = combine(revisionNoteId, revisionToRestoreId, revisionText) { noteId, revisionId, text ->
         RevisionState(noteId = noteId, revisionId = revisionId, text = text)
     }
 
-    private val assistantPanelState = combine(assistantTextInput, assistantBusy) { input, busy ->
-        AssistantPanelState(textInput = input, busy = busy)
-    }
-
-    private val assistantUiState = combine(assistantController.state, assistantPanelState) { runtime, panel ->
-        AssistantUiRuntimeState(runtime = runtime, textInput = panel.textInput, busy = panel.busy)
+    private val assistantPanelState = combine(assistantController.state, assistantTextInput) { assistantState, input ->
+        AssistantPanelState(assistantState = assistantState, textInput = input)
     }
 
     val state = combine(
         themeState,
         simulatorState,
         revisionState,
-        assistantUiState,
         commandTraceRepository.observeRecentCommandLogs(20),
-    ) { theme, simulator, revision, assistant, logs ->
+        assistantPanelState,
+    ) { theme, simulator, revision, logs, assistant ->
         SettingsUiState(
             homeBackgroundColor = theme.home,
             tagDrawerBackgroundColor = theme.tagDrawer,
@@ -214,9 +202,8 @@ class SettingsViewModel @Inject constructor(
             revisionNoteId = revision.noteId,
             revisionToRestoreId = revision.revisionId,
             revisionText = revision.text,
-            assistantState = assistant.runtime,
+            assistantState = assistant.assistantState,
             assistantTextInput = assistant.textInput,
-            assistantBusy = assistant.busy,
             recentLogs = logs,
         )
     }.stateIn(
@@ -233,6 +220,59 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch { settingsRepository.setTagDrawerBackgroundColor(hex) }
     }
 
+    fun setAssistantTextInput(value: String) {
+        assistantTextInput.value = value
+    }
+
+    fun enableAssistant() {
+        viewModelScope.launch { assistantController.enableAssistant() }
+    }
+
+    fun disableAssistant() {
+        viewModelScope.launch { assistantController.disableAssistant() }
+    }
+
+    fun prepareDeviceIdentity() {
+        viewModelScope.launch { assistantController.ensureDeviceIdentity() }
+    }
+
+    fun resetDeviceIdentity() {
+        viewModelScope.launch { assistantController.resetDeviceIdentity() }
+    }
+
+    fun runFakeActivation() {
+        viewModelScope.launch { assistantController.runFakeActivation() }
+    }
+
+    fun runRealActivation() {
+        viewModelScope.launch { assistantController.runRealActivation() }
+    }
+
+    fun connectAssistant() {
+        viewModelScope.launch { assistantController.connect() }
+    }
+
+    fun disconnectAssistant() {
+        viewModelScope.launch { assistantController.disconnect("settings_close") }
+    }
+
+    fun sendAssistantText() {
+        val text = assistantTextInput.value
+        viewModelScope.launch { assistantController.sendText(text) }
+    }
+
+    fun startFakePtt() {
+        viewModelScope.launch { assistantController.startPushToTalk(hasRecordAudioPermission = true) }
+    }
+
+    fun stopFakePtt() {
+        viewModelScope.launch { assistantController.stopPushToTalk() }
+    }
+
+    fun simulateBlockedNoteTool() {
+        viewModelScope.launch { assistantController.simulateIncomingToolCall("notes.delete", "{\"note_id\":1}") }
+    }
+
     fun setToolName(value: String) {
         toolName.value = value
     }
@@ -247,37 +287,6 @@ class SettingsViewModel @Inject constructor(
 
     fun setRevisionToRestoreId(value: String) {
         revisionToRestoreId.value = value.filter { it.isDigit() }
-    }
-
-    fun setAssistantTextInput(value: String) {
-        assistantTextInput.value = value
-    }
-
-    fun enableAssistant() = runAssistantAction { assistantController.enableAssistant() }
-
-    fun disableAssistant() = runAssistantAction { assistantController.disableAssistant() }
-
-    fun connectAssistant() = runAssistantAction { assistantController.connect() }
-
-    fun disconnectAssistant() = runAssistantAction { assistantController.disconnect("settings_debug_close") }
-
-    fun sendAssistantText() = runAssistantAction { assistantController.sendText(assistantTextInput.value) }
-
-    fun startFakePushToTalk() = runAssistantAction { assistantController.startPushToTalk(hasRecordAudioPermission = true) }
-
-    fun stopFakePushToTalk() = runAssistantAction { assistantController.stopPushToTalk() }
-
-    fun simulateBlockedNoteTool() = runAssistantAction {
-        assistantController.simulateIncomingToolCall("notes.delete", "{\"note_id\":1}")
-    }
-
-    private fun runAssistantAction(block: suspend () -> Unit) {
-        if (assistantBusy.value) return
-        viewModelScope.launch {
-            assistantBusy.value = true
-            block()
-            assistantBusy.value = false
-        }
     }
 
     fun applySample(sample: ToolSample) {
@@ -418,9 +427,7 @@ class SettingsViewModel @Inject constructor(
             add(name)
         }
         return runCatching {
-            val method = target.javaClass.methods.firstOrNull { method ->
-                method.parameterCount == 0 && candidates.contains(method.name)
-            }
+            val method = target.javaClass.methods.firstOrNull { method -> method.parameterCount == 0 && candidates.contains(method.name) }
             if (method != null) {
                 method.invoke(target)
             } else {
@@ -444,8 +451,7 @@ data class SettingsUiState(
     val revisionToRestoreId: String = "",
     val revisionText: String = "输入 note_id 后点击刷新 revision。",
     val assistantState: AssistantState = AssistantState.disabled(),
-    val assistantTextInput: String = "你好，做一次 Phase3 文本对话测试",
-    val assistantBusy: Boolean = false,
+    val assistantTextInput: String = "你好，请简单介绍一下自己",
     val recentLogs: List<AssistantCommandLog> = emptyList(),
 )
 
@@ -458,28 +464,26 @@ data class ToolSample(
 )
 
 @Composable
-private fun SectionTitle(title: String) {
-    Text(
-        text = title,
-        color = Color(0xFF222832),
-        style = MaterialTheme.typography.titleSmall,
-        fontWeight = FontWeight.Bold,
-        modifier = Modifier.padding(top = 6.dp, start = 2.dp),
-    )
+private fun SectionTitle(text: String) {
+    Text(text, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = Color(0xFF222832))
 }
 
 @Composable
-private fun AssistantRuntimeBox(
+private fun Phase3RuntimeBox(
     state: SettingsUiState,
-    onTextChange: (String) -> Unit,
     onEnableClick: () -> Unit,
     onDisableClick: () -> Unit,
+    onPrepareIdentityClick: () -> Unit,
+    onResetIdentityClick: () -> Unit,
+    onFakeActivationClick: () -> Unit,
+    onRealActivationClick: () -> Unit,
     onConnectClick: () -> Unit,
     onDisconnectClick: () -> Unit,
+    onTextInputChange: (String) -> Unit,
     onSendTextClick: () -> Unit,
     onStartPttClick: () -> Unit,
     onStopPttClick: () -> Unit,
-    onBlockedToolClick: () -> Unit,
+    onSimulateToolCallClick: () -> Unit,
 ) {
     val assistant = state.assistantState
     Column(
@@ -489,81 +493,57 @@ private fun AssistantRuntimeBox(
             .padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text("Gate A：Fake Runtime", color = Color(0xFF222832), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                Text("Phase3 当前只验证运行时状态、文本对话、PTT 生命周期和工具阻断，不改便签。", color = Color(0xFF697386), style = MaterialTheme.typography.bodySmall)
-            }
-            StatusPill(text = if (assistant.fakeRuntime) "Fake" else "Real")
-        }
-        RuntimeStateLine("phase", assistant.phase.storageValue)
-        RuntimeStateLine("connection", assistant.connection.storageValue)
-        RuntimeStateLine("activation", assistant.activation.storageValue)
-        RuntimeStateLine("audio", assistant.audio.storageValue)
-        RuntimeStateLine("session", assistant.sessionId ?: "暂无")
-        RuntimeStateLine("status", assistant.statusText)
-        assistant.errorMessage?.let { RuntimeStateLine("error", it) }
-        assistant.lastAssistantText?.let { RuntimeStateLine("assistant", it) }
+        Text("Phase3 助手运行时", color = Color(0xFF222832), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+        Text(
+            "当前是 Fake Runtime + activation 验证入口：可生成设备身份、跑 fake activation，也可手动触发真实 OTA/activation；Phase3 不执行便签工具。",
+            color = Color(0xFF697386),
+            style = MaterialTheme.typography.bodySmall,
+        )
+        Text("phase=${assistant.phase.storageValue} · connection=${assistant.connection.storageValue} · activation=${assistant.activation.storageValue} · audio=${assistant.audio.storageValue}", color = Color(0xFF344054), style = MaterialTheme.typography.bodySmall)
+        Text("status=${assistant.statusText}", color = Color(0xFF344054), style = MaterialTheme.typography.bodySmall)
+        assistant.errorMessage?.let { Text("error=$it", color = Color(0xFFB42318), style = MaterialTheme.typography.bodySmall) }
+        assistant.deviceId?.let { Text("device_id=$it", color = Color(0xFF697386), style = MaterialTheme.typography.bodySmall) }
+        assistant.clientId?.let { Text("client_id=${it.take(8)}...", color = Color(0xFF697386), style = MaterialTheme.typography.bodySmall) }
+        assistant.websocketUrl?.let { Text("websocket=$it", color = Color(0xFF697386), style = MaterialTheme.typography.bodySmall) }
+        assistant.activationCode?.let { Text("activation_code=$it", color = Color(0xFF9A3412), style = MaterialTheme.typography.bodySmall) }
+        assistant.sessionId?.let { Text("session=$it", color = Color(0xFF697386), style = MaterialTheme.typography.bodySmall) }
+        assistant.lastAssistantText?.let { Text("last assistant=$it", color = Color(0xFF344054), style = MaterialTheme.typography.bodySmall) }
 
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(
-                onClick = if (assistant.assistantEnabled) onDisableClick else onEnableClick,
-                enabled = !state.assistantBusy,
-                shape = RoundedCornerShape(14.dp),
-                modifier = Modifier.weight(1f),
-            ) { Text(if (assistant.assistantEnabled) "关闭助手" else "启用助手") }
-            Button(
-                onClick = if (assistant.isConnected) onDisconnectClick else onConnectClick,
-                enabled = !state.assistantBusy && assistant.assistantEnabled,
-                shape = RoundedCornerShape(14.dp),
-                modifier = Modifier.weight(1f),
-            ) { Text(if (assistant.isConnected) "断开" else "连接") }
+            Button(onClick = onEnableClick, shape = RoundedCornerShape(14.dp), modifier = Modifier.weight(1f)) { Text("启用助手") }
+            Button(onClick = onDisableClick, shape = RoundedCornerShape(14.dp), modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6B7280))) { Text("关闭助手") }
         }
-
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = onPrepareIdentityClick, shape = RoundedCornerShape(14.dp), modifier = Modifier.weight(1f)) { Text("准备身份") }
+            Button(onClick = onResetIdentityClick, shape = RoundedCornerShape(14.dp), modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6B7280))) { Text("重置身份") }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = onFakeActivationClick, shape = RoundedCornerShape(14.dp), modifier = Modifier.weight(1f)) { Text("Fake 激活") }
+            Button(onClick = onRealActivationClick, shape = RoundedCornerShape(14.dp), modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7C3AED))) { Text("真实 OTA") }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = onConnectClick, shape = RoundedCornerShape(14.dp), modifier = Modifier.weight(1f)) { Text("连接 Fake") }
+            Button(onClick = onDisconnectClick, shape = RoundedCornerShape(14.dp), modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6B7280))) { Text("断开") }
+        }
         OutlinedTextField(
             value = state.assistantTextInput,
-            onValueChange = onTextChange,
+            onValueChange = onTextInputChange,
             label = { Text("文本对话测试") },
             minLines = 2,
             maxLines = 4,
             modifier = Modifier.fillMaxWidth(),
         )
-        Button(
-            onClick = onSendTextClick,
-            enabled = !state.assistantBusy && assistant.assistantEnabled,
-            shape = RoundedCornerShape(14.dp),
-            modifier = Modifier.fillMaxWidth(),
-        ) { Text(if (state.assistantBusy) "运行中……" else "发送文本到 Fake Runtime") }
-
+        Button(onClick = onSendTextClick, shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth()) { Text("发送文本到 Fake Runtime") }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(
-                onClick = onStartPttClick,
-                enabled = !state.assistantBusy && assistant.assistantEnabled,
-                shape = RoundedCornerShape(14.dp),
-                modifier = Modifier.weight(1f),
-            ) { Text("开始 PTT") }
-            Button(
-                onClick = onStopPttClick,
-                enabled = !state.assistantBusy && assistant.assistantEnabled,
-                shape = RoundedCornerShape(14.dp),
-                modifier = Modifier.weight(1f),
-            ) { Text("结束 PTT") }
+            Button(onClick = onStartPttClick, shape = RoundedCornerShape(14.dp), modifier = Modifier.weight(1f)) { Text("开始 PTT") }
+            Button(onClick = onStopPttClick, shape = RoundedCornerShape(14.dp), modifier = Modifier.weight(1f)) { Text("结束 PTT") }
         }
         Button(
-            onClick = onBlockedToolClick,
-            enabled = !state.assistantBusy,
-            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6B7280)),
-            shape = RoundedCornerShape(14.dp),
+            onClick = onSimulateToolCallClick,
+            shape = RoundedCornerShape(16.dp),
             modifier = Modifier.fillMaxWidth(),
+            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626)),
         ) { Text("模拟 notes.delete 工具调用并阻断") }
-    }
-}
-
-@Composable
-private fun RuntimeStateLine(label: String, value: String) {
-    Row(verticalAlignment = Alignment.Top) {
-        Text(label, color = Color(0xFF9AA3B2), style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(0.32f))
-        Text(value, color = Color(0xFF344054), style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(0.68f))
     }
 }
 
@@ -585,49 +565,17 @@ private fun ToolSimulatorBox(
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Text("Phase2 本地工具模拟器", color = Color(0xFF222832), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-        Text(
-            "支持完整 tool name + arguments JSON。高风险命令先返回 requires_confirmation，必须确认后才执行。",
-            color = Color(0xFF697386),
-            style = MaterialTheme.typography.bodySmall,
-        )
-        Row(
-            modifier = Modifier.horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
+        Text("支持完整 tool name + arguments JSON。高风险命令先返回 requires_confirmation，必须确认后才执行。", color = Color(0xFF697386), style = MaterialTheme.typography.bodySmall)
+        Row(modifier = Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             toolSamples.forEach { sample ->
-                Surface(
-                    onClick = { onSampleClick(sample) },
-                    shape = RoundedCornerShape(14.dp),
-                    color = Color(0xFFF6F7FB),
-                    border = BorderStroke(1.dp, Color(0xFFE5E7EB)),
-                ) {
+                Surface(onClick = { onSampleClick(sample) }, shape = RoundedCornerShape(14.dp), color = Color(0xFFF6F7FB), border = BorderStroke(1.dp, Color(0xFFE5E7EB))) {
                     Text(sample.label, modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp), style = MaterialTheme.typography.labelMedium)
                 }
             }
         }
-        OutlinedTextField(
-            value = state.toolName,
-            onValueChange = onToolNameChange,
-            label = { Text("tool name") },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-        )
-        OutlinedTextField(
-            value = state.argumentsJson,
-            onValueChange = onArgumentsChange,
-            label = { Text("arguments JSON") },
-            minLines = 4,
-            maxLines = 8,
-            modifier = Modifier.fillMaxWidth(),
-        )
-        Button(
-            onClick = onExecuteClick,
-            enabled = !state.isRunning,
-            shape = RoundedCornerShape(16.dp),
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Text(if (state.isRunning) "执行中……" else "执行 tools/call")
-        }
+        OutlinedTextField(value = state.toolName, onValueChange = onToolNameChange, label = { Text("tool name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(value = state.argumentsJson, onValueChange = onArgumentsChange, label = { Text("arguments JSON") }, minLines = 4, maxLines = 8, modifier = Modifier.fillMaxWidth())
+        Button(onClick = onExecuteClick, enabled = !state.isRunning, shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth()) { Text(if (state.isRunning) "执行中……" else "执行 tools/call") }
         state.pendingConfirmationId?.let { confirmationId ->
             Column(
                 modifier = Modifier
@@ -639,33 +587,13 @@ private fun ToolSimulatorBox(
                 Text("待确认操作", fontWeight = FontWeight.SemiBold, color = Color(0xFF9A3412))
                 Text("confirmation_id=$confirmationId", color = Color(0xFF9A3412), style = MaterialTheme.typography.bodySmall)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(
-                        onClick = onConfirmClick,
-                        enabled = !state.isRunning,
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626)),
-                        shape = RoundedCornerShape(14.dp),
-                        modifier = Modifier.weight(1f),
-                    ) { Text("确认执行") }
-                    Button(
-                        onClick = onRejectClick,
-                        enabled = !state.isRunning,
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6B7280)),
-                        shape = RoundedCornerShape(14.dp),
-                        modifier = Modifier.weight(1f),
-                    ) { Text("拒绝") }
+                    Button(onClick = onConfirmClick, enabled = !state.isRunning, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626)), shape = RoundedCornerShape(14.dp), modifier = Modifier.weight(1f)) { Text("确认执行") }
+                    Button(onClick = onRejectClick, enabled = !state.isRunning, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6B7280)), shape = RoundedCornerShape(14.dp), modifier = Modifier.weight(1f)) { Text("拒绝") }
                 }
             }
         }
         Text("执行结果", color = Color(0xFF9AA3B2), style = MaterialTheme.typography.bodySmall)
-        Text(
-            state.resultText,
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(Color(0xFFF6F7FB), RoundedCornerShape(14.dp))
-                .padding(10.dp),
-            style = MaterialTheme.typography.bodySmall,
-            color = Color(0xFF344054),
-        )
+        Text(state.resultText, modifier = Modifier.fillMaxWidth().background(Color(0xFFF6F7FB), RoundedCornerShape(14.dp)).padding(10.dp), style = MaterialTheme.typography.bodySmall, color = Color(0xFF344054))
     }
 }
 
@@ -677,68 +605,30 @@ private fun RevisionDebugBox(
     onLoadClick: () -> Unit,
     onApplyRestoreSampleClick: () -> Unit,
 ) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(Color.White.copy(alpha = 0.92f), RoundedCornerShape(18.dp))
-            .padding(14.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
+    Column(modifier = Modifier.fillMaxWidth().background(Color.White.copy(alpha = 0.92f), RoundedCornerShape(18.dp)).padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text("Revision 验证入口", color = Color(0xFF222832), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
         Text("输入 note_id 查看最近 revision；套用 restore_revision 后仍需走高风险确认。", color = Color(0xFF697386), style = MaterialTheme.typography.bodySmall)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            OutlinedTextField(
-                value = state.revisionNoteId,
-                onValueChange = onNoteIdChange,
-                label = { Text("note_id") },
-                singleLine = true,
-                modifier = Modifier.weight(1f),
-            )
+            OutlinedTextField(value = state.revisionNoteId, onValueChange = onNoteIdChange, label = { Text("note_id") }, singleLine = true, modifier = Modifier.weight(1f))
             Button(onClick = onLoadClick, shape = RoundedCornerShape(14.dp), enabled = !state.isRunning) { Text("刷新") }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            OutlinedTextField(
-                value = state.revisionToRestoreId,
-                onValueChange = onRevisionIdChange,
-                label = { Text("revision_id") },
-                singleLine = true,
-                modifier = Modifier.weight(1f),
-            )
+            OutlinedTextField(value = state.revisionToRestoreId, onValueChange = onRevisionIdChange, label = { Text("revision_id") }, singleLine = true, modifier = Modifier.weight(1f))
             Button(onClick = onApplyRestoreSampleClick, shape = RoundedCornerShape(14.dp), enabled = !state.isRunning) { Text("套用恢复") }
         }
-        Text(
-            state.revisionText,
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(Color(0xFFF6F7FB), RoundedCornerShape(14.dp))
-                .padding(10.dp),
-            style = MaterialTheme.typography.bodySmall,
-            color = Color(0xFF344054),
-        )
+        Text(state.revisionText, modifier = Modifier.fillMaxWidth().background(Color(0xFFF6F7FB), RoundedCornerShape(14.dp)).padding(10.dp), style = MaterialTheme.typography.bodySmall, color = Color(0xFF344054))
     }
 }
 
 @Composable
 private fun CommandLogBox(logs: List<AssistantCommandLog>) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(Color.White.copy(alpha = 0.92f), RoundedCornerShape(18.dp))
-            .padding(14.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
+    Column(modifier = Modifier.fillMaxWidth().background(Color.White.copy(alpha = 0.92f), RoundedCornerShape(18.dp)).padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text("最近命令日志", color = Color(0xFF222832), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
         if (logs.isEmpty()) {
             Text("暂无命令日志。", color = Color(0xFF697386), style = MaterialTheme.typography.bodySmall)
         } else {
             logs.forEach { log ->
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(Color(0xFFF6F7FB), RoundedCornerShape(14.dp))
-                        .padding(10.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
-                ) {
+                Column(modifier = Modifier.fillMaxWidth().background(Color(0xFFF6F7FB), RoundedCornerShape(14.dp)).padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text("#${log.id} ${log.toolName.storageValue}", modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold, color = Color(0xFF344054))
                         Text(log.status.storageValue, color = Color(0xFF3D6BFF), style = MaterialTheme.typography.labelMedium)
@@ -757,55 +647,21 @@ private fun CommandLogBox(logs: List<AssistantCommandLog>) {
 
 @Composable
 private fun SettingBox(label: String, value: String) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(Color.White.copy(alpha = 0.92f), RoundedCornerShape(18.dp))
-            .padding(14.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
+    Column(modifier = Modifier.fillMaxWidth().background(Color.White.copy(alpha = 0.92f), RoundedCornerShape(18.dp)).padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(label, color = Color(0xFF9AA3B2), style = MaterialTheme.typography.bodyMedium)
         Text(value, style = MaterialTheme.typography.bodyLarge)
     }
 }
 
 @Composable
-private fun ColorSettingBox(
-    label: String,
-    selectedHex: String,
-    options: List<ColorOption>,
-    onSelect: (String) -> Unit,
-) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(Color.White.copy(alpha = 0.92f), RoundedCornerShape(18.dp))
-            .padding(14.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
+private fun ColorSettingBox(label: String, selectedHex: String, options: List<ColorOption>, onSelect: (String) -> Unit) {
+    Column(modifier = Modifier.fillMaxWidth().background(Color.White.copy(alpha = 0.92f), RoundedCornerShape(18.dp)).padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text(label, color = Color(0xFF9AA3B2), style = MaterialTheme.typography.bodyMedium)
-        Row(
-            modifier = Modifier.horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
+        Row(modifier = Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             options.forEach { option ->
-                Surface(
-                    onClick = { onSelect(option.hex) },
-                    shape = RoundedCornerShape(14.dp),
-                    color = if (selectedHex == option.hex) Color(0xFFEDE0FF) else Color(0xFFF6F7FB),
-                    border = BorderStroke(1.dp, if (selectedHex == option.hex) Color.Transparent else Color(0xFFE5E7EB)),
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(14.dp)
-                                .background(colorFromHex(option.hex), CircleShape),
-                        )
+                Surface(onClick = { onSelect(option.hex) }, shape = RoundedCornerShape(14.dp), color = if (selectedHex == option.hex) Color(0xFFEDE0FF) else Color(0xFFF6F7FB), border = BorderStroke(1.dp, if (selectedHex == option.hex) Color.Transparent else Color(0xFFE5E7EB))) {
+                    Row(modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Box(modifier = Modifier.size(14.dp).background(colorFromHex(option.hex), CircleShape))
                         Text(option.name, style = MaterialTheme.typography.labelMedium, color = Color(0xFF344054))
                     }
                 }

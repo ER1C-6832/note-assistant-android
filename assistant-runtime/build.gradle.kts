@@ -33,6 +33,7 @@ dependencies {
     implementation(project(":core-common"))
     implementation(project(":app-settings"))
     implementation(libs.kotlinx.coroutines.android)
+    implementation(libs.okhttp)
 
     testImplementation(libs.junit)
 }

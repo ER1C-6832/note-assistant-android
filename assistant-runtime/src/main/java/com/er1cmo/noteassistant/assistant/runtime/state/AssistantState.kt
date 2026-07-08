@@ -50,6 +50,10 @@ data class AssistantState(
     val reconnectAttempt: Int = 0,
     val assistantEnabled: Boolean = false,
     val fakeRuntime: Boolean = true,
+    val deviceId: String? = null,
+    val clientId: String? = null,
+    val activationCode: String? = null,
+    val websocketUrl: String? = null,
 ) {
     val isConnected: Boolean
         get() = connection == AssistantConnectionStatus.Connected && sessionId != null

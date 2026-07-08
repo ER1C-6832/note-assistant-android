@@ -22,6 +22,20 @@ class SettingsRepository @Inject constructor(
         val websocketUrl = stringPreferencesKey("websocket_url")
         val homeBackgroundColor = stringPreferencesKey("home_background_color")
         val tagDrawerBackgroundColor = stringPreferencesKey("tag_drawer_background_color")
+
+        val assistantOtaUrl = stringPreferencesKey("assistant_ota_url")
+        val assistantAuthorizationUrl = stringPreferencesKey("assistant_authorization_url")
+        val assistantWebsocketToken = stringPreferencesKey("assistant_websocket_token")
+        val assistantActivationVersion = stringPreferencesKey("assistant_activation_version")
+        val assistantActivationStatus = booleanPreferencesKey("assistant_activation_status")
+        val assistantActivationCode = stringPreferencesKey("assistant_activation_code")
+        val assistantActivationChallenge = stringPreferencesKey("assistant_activation_challenge")
+        val assistantActivationMessage = stringPreferencesKey("assistant_activation_message")
+        val assistantClientId = stringPreferencesKey("assistant_client_id")
+        val assistantDeviceId = stringPreferencesKey("assistant_device_id")
+        val assistantSerialNumber = stringPreferencesKey("assistant_serial_number")
+        val assistantHmacKey = stringPreferencesKey("assistant_hmac_key")
+        val assistantLastJson = stringPreferencesKey("assistant_last_json")
     }
 
     val assistantEnabled: Flow<Boolean> = context.appSettingsDataStore.data.map { prefs ->
@@ -29,7 +43,55 @@ class SettingsRepository @Inject constructor(
     }
 
     val websocketUrl: Flow<String> = context.appSettingsDataStore.data.map { prefs ->
-        prefs[Keys.websocketUrl] ?: "wss://example.invalid/xiaozhi"
+        prefs[Keys.websocketUrl] ?: DEFAULT_ASSISTANT_WEBSOCKET_URL
+    }
+
+    val assistantWebsocketToken: Flow<String> = context.appSettingsDataStore.data.map { prefs ->
+        prefs[Keys.assistantWebsocketToken].orEmpty()
+    }
+
+    val assistantOtaUrl: Flow<String> = context.appSettingsDataStore.data.map { prefs ->
+        prefs[Keys.assistantOtaUrl] ?: DEFAULT_ASSISTANT_OTA_URL
+    }
+
+    val assistantAuthorizationUrl: Flow<String> = context.appSettingsDataStore.data.map { prefs ->
+        prefs[Keys.assistantAuthorizationUrl] ?: DEFAULT_ASSISTANT_AUTHORIZATION_URL
+    }
+
+    val assistantActivationVersion: Flow<String> = context.appSettingsDataStore.data.map { prefs ->
+        prefs[Keys.assistantActivationVersion] ?: DEFAULT_ASSISTANT_ACTIVATION_VERSION
+    }
+
+    val assistantActivationStatus: Flow<Boolean> = context.appSettingsDataStore.data.map { prefs ->
+        prefs[Keys.assistantActivationStatus] ?: false
+    }
+
+    val assistantActivationCode: Flow<String> = context.appSettingsDataStore.data.map { prefs ->
+        prefs[Keys.assistantActivationCode].orEmpty()
+    }
+
+    val assistantActivationMessage: Flow<String> = context.appSettingsDataStore.data.map { prefs ->
+        prefs[Keys.assistantActivationMessage].orEmpty()
+    }
+
+    val assistantClientId: Flow<String> = context.appSettingsDataStore.data.map { prefs ->
+        prefs[Keys.assistantClientId].orEmpty()
+    }
+
+    val assistantDeviceId: Flow<String> = context.appSettingsDataStore.data.map { prefs ->
+        prefs[Keys.assistantDeviceId].orEmpty()
+    }
+
+    val assistantSerialNumber: Flow<String> = context.appSettingsDataStore.data.map { prefs ->
+        prefs[Keys.assistantSerialNumber].orEmpty()
+    }
+
+    val assistantHmacKey: Flow<String> = context.appSettingsDataStore.data.map { prefs ->
+        prefs[Keys.assistantHmacKey].orEmpty()
+    }
+
+    val assistantLastJson: Flow<String> = context.appSettingsDataStore.data.map { prefs ->
+        prefs[Keys.assistantLastJson].orEmpty()
     }
 
     val homeBackgroundColor: Flow<String> = context.appSettingsDataStore.data.map { prefs ->
@@ -45,7 +107,104 @@ class SettingsRepository @Inject constructor(
     }
 
     suspend fun setWebsocketUrl(url: String) {
-        context.appSettingsDataStore.edit { prefs -> prefs[Keys.websocketUrl] = url }
+        context.appSettingsDataStore.edit { prefs -> prefs[Keys.websocketUrl] = url.ifBlank { DEFAULT_ASSISTANT_WEBSOCKET_URL } }
+    }
+
+    suspend fun setAssistantOtaUrl(url: String) {
+        context.appSettingsDataStore.edit { prefs -> prefs[Keys.assistantOtaUrl] = url.ifBlank { DEFAULT_ASSISTANT_OTA_URL } }
+    }
+
+    suspend fun setAssistantAuthorizationUrl(url: String) {
+        context.appSettingsDataStore.edit { prefs -> prefs[Keys.assistantAuthorizationUrl] = url.ifBlank { DEFAULT_ASSISTANT_AUTHORIZATION_URL } }
+    }
+
+    suspend fun setAssistantActivationVersion(value: String) {
+        context.appSettingsDataStore.edit { prefs -> prefs[Keys.assistantActivationVersion] = value.ifBlank { DEFAULT_ASSISTANT_ACTIVATION_VERSION } }
+    }
+
+    suspend fun saveAssistantNetworkSettings(
+        otaUrl: String,
+        authorizationUrl: String,
+        websocketUrl: String,
+        websocketToken: String,
+        activationVersion: String,
+    ) {
+        context.appSettingsDataStore.edit { prefs ->
+            prefs[Keys.assistantOtaUrl] = otaUrl.ifBlank { DEFAULT_ASSISTANT_OTA_URL }
+            prefs[Keys.assistantAuthorizationUrl] = authorizationUrl.ifBlank { DEFAULT_ASSISTANT_AUTHORIZATION_URL }
+            prefs[Keys.websocketUrl] = websocketUrl.ifBlank { DEFAULT_ASSISTANT_WEBSOCKET_URL }
+            if (websocketToken.isBlank()) {
+                prefs.remove(Keys.assistantWebsocketToken)
+            } else {
+                prefs[Keys.assistantWebsocketToken] = websocketToken.trim()
+            }
+            prefs[Keys.assistantActivationVersion] = activationVersion.ifBlank { DEFAULT_ASSISTANT_ACTIVATION_VERSION }
+        }
+    }
+
+    suspend fun saveAssistantIdentity(
+        clientId: String,
+        deviceId: String,
+        serialNumber: String,
+        hmacKey: String,
+    ) {
+        context.appSettingsDataStore.edit { prefs ->
+            prefs[Keys.assistantClientId] = clientId
+            prefs[Keys.assistantDeviceId] = deviceId
+            prefs[Keys.assistantSerialNumber] = serialNumber
+            prefs[Keys.assistantHmacKey] = hmacKey
+        }
+    }
+
+    suspend fun clearAssistantIdentityAndActivation() {
+        context.appSettingsDataStore.edit { prefs ->
+            prefs.remove(Keys.assistantClientId)
+            prefs.remove(Keys.assistantDeviceId)
+            prefs.remove(Keys.assistantSerialNumber)
+            prefs.remove(Keys.assistantHmacKey)
+            prefs[Keys.assistantActivationStatus] = false
+            prefs.remove(Keys.assistantActivationCode)
+            prefs.remove(Keys.assistantActivationChallenge)
+            prefs.remove(Keys.assistantActivationMessage)
+            prefs.remove(Keys.assistantWebsocketToken)
+            prefs.remove(Keys.assistantLastJson)
+            prefs.remove(Keys.websocketUrl)
+        }
+    }
+
+    suspend fun saveAssistantWebSocketConfig(url: String, token: String) {
+        context.appSettingsDataStore.edit { prefs ->
+            prefs[Keys.websocketUrl] = url.ifBlank { DEFAULT_ASSISTANT_WEBSOCKET_URL }
+            if (token.isBlank()) {
+                prefs.remove(Keys.assistantWebsocketToken)
+            } else {
+                prefs[Keys.assistantWebsocketToken] = token
+            }
+        }
+    }
+
+    suspend fun setAssistantActivationStatus(activated: Boolean) {
+        context.appSettingsDataStore.edit { prefs -> prefs[Keys.assistantActivationStatus] = activated }
+    }
+
+    suspend fun saveAssistantActivationData(code: String, challenge: String, message: String) {
+        context.appSettingsDataStore.edit { prefs ->
+            prefs[Keys.assistantActivationCode] = code
+            prefs[Keys.assistantActivationChallenge] = challenge
+            prefs[Keys.assistantActivationMessage] = message
+        }
+    }
+
+    suspend fun clearAssistantActivationData() {
+        context.appSettingsDataStore.edit { prefs ->
+            prefs.remove(Keys.assistantActivationCode)
+            prefs.remove(Keys.assistantActivationChallenge)
+            prefs.remove(Keys.assistantActivationMessage)
+        }
+    }
+
+    suspend fun saveAssistantLastJson(value: String) {
+        context.appSettingsDataStore.edit { prefs -> prefs[Keys.assistantLastJson] = value }
     }
 
     suspend fun setHomeBackgroundColor(hex: String) {
@@ -59,5 +218,9 @@ class SettingsRepository @Inject constructor(
     companion object {
         const val DEFAULT_HOME_BACKGROUND = "#FFFFFF"
         const val DEFAULT_TAG_DRAWER_BACKGROUND = "#FFF3D1"
+        const val DEFAULT_ASSISTANT_OTA_URL = "https://api.tenclass.net/xiaozhi/ota/"
+        const val DEFAULT_ASSISTANT_AUTHORIZATION_URL = "https://xiaozhi.me/"
+        const val DEFAULT_ASSISTANT_WEBSOCKET_URL = "wss://example.invalid/xiaozhi"
+        const val DEFAULT_ASSISTANT_ACTIVATION_VERSION = "v2"
     }
 }
