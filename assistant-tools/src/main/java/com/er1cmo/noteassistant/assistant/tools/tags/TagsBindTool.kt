@@ -16,7 +16,7 @@ class TagsBindTool @Inject constructor(
     private val commandService: NoteCommandService,
 ) : McpTool {
     override val name: String = "tags.bind"
-    override val description: String = "给一条或多条便签添加标签。Phase4 Gate B 仅开放 add 模式；replace/delete 后续 Gate C/D 开放。"
+    override val description: String = "给一条或多条便签添加或替换标签。add 为中风险直接执行；replace 为高风险，必须先返回确认请求。"
     override val riskLevel: McpRiskLevel = McpRiskLevel.Medium
     override val descriptor: McpToolDescriptor = McpToolDescriptor(
         name = name,
@@ -29,15 +29,15 @@ class TagsBindTool @Inject constructor(
                 "note_ids": { "type": "array", "items": { "type": "integer" } },
                 "tags": { "type": "array", "items": { "type": "string" } },
                 "tag_text": { "type": "string" },
-                "mode": { "type": "string", "enum": ["add"] }
+                "mode": { "type": "string", "enum": ["add", "replace"] }
               },
               "additionalProperties": false
             }
         """.trimIndent(),
         riskLevel = McpRiskLevel.Medium,
         mutates = true,
-        confirmation = McpToolDescriptor.CONFIRMATION_NOT_REQUIRED,
-        examples = listOf("给这条便签加上客户标签", "给 note_id=12 添加 Phase4 标签"),
+        confirmation = McpToolDescriptor.CONFIRMATION_MAY_BE_REQUIRED,
+        examples = listOf("给这条便签加上客户标签", "把这条便签的标签替换成客户和紧急"),
     )
 
     override suspend fun call(argumentsJson: String): McpToolResult = call(argumentsJson, McpToolContext())
@@ -51,21 +51,21 @@ class TagsBindTool @Inject constructor(
             )
         }
         val mode = parser.optionalString("mode", "add").ifBlank { "add" }.lowercase()
-        if (mode != "add") {
+        if (mode != "add" && mode != "replace") {
             return McpToolResult.blocked(
                 toolName = name,
-                message = "Phase4 Gate B 只允许 tags.bind add；$mode 模式将在高风险确认阶段开放。",
+                message = "Phase4 Gate C 只允许 tags.bind add/replace；$mode 模式暂未开放。",
                 argumentsJson = argumentsJson,
                 resultJson = JSONObject()
                     .put("blocked", true)
-                    .put("allowed_mode", "add")
+                    .put("allowed_modes", listOf("add", "replace"))
                     .put("requested_mode", mode)
                     .toString(),
-                errorCode = "mode_not_enabled_in_gate_b",
+                errorCode = "mode_not_enabled_in_gate_c",
             )
         }
         val normalizedArguments = JSONObject(parser.raw().toString())
-            .put("mode", "add")
+            .put("mode", mode)
             .toString()
         val commandResult = commandService.execute(
             toolName = name,
