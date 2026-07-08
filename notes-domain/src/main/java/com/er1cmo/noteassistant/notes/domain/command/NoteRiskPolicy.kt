@@ -34,6 +34,7 @@ class NoteRiskPolicy @Inject constructor() {
             ToolName.NotesDelete,
             ToolName.NotesReplaceContent,
             ToolName.NotesRestoreRevision,
+            ToolName.NotesClearDone,
             ToolName.TagsDelete,
             -> RiskLevel.High
 

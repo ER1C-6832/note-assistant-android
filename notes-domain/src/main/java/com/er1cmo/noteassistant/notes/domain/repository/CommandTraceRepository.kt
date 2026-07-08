@@ -18,6 +18,7 @@ interface CommandTraceRepository {
 
     suspend fun insertPendingConfirmation(pendingConfirmation: PendingConfirmation)
     suspend fun getPendingConfirmation(confirmationId: String): PendingConfirmation?
+    suspend fun listPendingConfirmations(limit: Int = 20, onlyPending: Boolean = true): List<PendingConfirmation>
     suspend fun updatePendingConfirmation(pendingConfirmation: PendingConfirmation)
     suspend fun markExpiredPendingConfirmations(nowMillis: Long): Int
 

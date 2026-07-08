@@ -61,6 +61,10 @@ class CommandTraceRepositoryImpl @Inject constructor(
         pendingConfirmationDao.getPendingConfirmationById(confirmationId)?.toDomain()
     }
 
+    override suspend fun listPendingConfirmations(limit: Int, onlyPending: Boolean): List<PendingConfirmation> = withContext(dispatchers.io) {
+        pendingConfirmationDao.listPendingConfirmations(limit = limit, onlyPending = onlyPending).map { it.toDomain() }
+    }
+
     override suspend fun updatePendingConfirmation(pendingConfirmation: PendingConfirmation) = withContext(dispatchers.io) {
         pendingConfirmationDao.updatePendingConfirmation(pendingConfirmation.toEntity())
     }

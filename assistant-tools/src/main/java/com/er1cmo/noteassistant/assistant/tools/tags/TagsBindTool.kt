@@ -10,13 +10,12 @@ import com.er1cmo.noteassistant.assistant.tools.common.toCommandSource
 import com.er1cmo.noteassistant.assistant.tools.common.toMcpToolResult
 import com.er1cmo.noteassistant.notes.domain.command.NoteCommandService
 import javax.inject.Inject
-import org.json.JSONObject
 
 class TagsBindTool @Inject constructor(
     private val commandService: NoteCommandService,
 ) : McpTool {
     override val name: String = "tags.bind"
-    override val description: String = "给一条或多条便签添加或替换标签。add 为中风险直接执行；replace 为高风险，必须先返回确认请求。"
+    override val description: String = "给一条或多条便签添加、移除或替换标签。replace/remove 或批量操作可能要求确认。"
     override val riskLevel: McpRiskLevel = McpRiskLevel.Medium
     override val descriptor: McpToolDescriptor = McpToolDescriptor(
         name = name,
@@ -29,7 +28,7 @@ class TagsBindTool @Inject constructor(
                 "note_ids": { "type": "array", "items": { "type": "integer" } },
                 "tags": { "type": "array", "items": { "type": "string" } },
                 "tag_text": { "type": "string" },
-                "mode": { "type": "string", "enum": ["add", "replace"] }
+                "mode": { "type": "string", "enum": ["add", "remove", "replace"] }
               },
               "additionalProperties": false
             }
@@ -37,7 +36,7 @@ class TagsBindTool @Inject constructor(
         riskLevel = McpRiskLevel.Medium,
         mutates = true,
         confirmation = McpToolDescriptor.CONFIRMATION_MAY_BE_REQUIRED,
-        examples = listOf("给这条便签加上客户标签", "把这条便签的标签替换成客户和紧急"),
+        examples = listOf("给这条便签加上客户标签", "把 note_id=12 的标签替换成 GateD", "从这条便签移除客户标签"),
     )
 
     override suspend fun call(argumentsJson: String): McpToolResult = call(argumentsJson, McpToolContext())
@@ -51,27 +50,20 @@ class TagsBindTool @Inject constructor(
             )
         }
         val mode = parser.optionalString("mode", "add").ifBlank { "add" }.lowercase()
-        if (mode != "add" && mode != "replace") {
-            return McpToolResult.blocked(
+        if (mode !in setOf("add", "remove", "replace")) {
+            return McpToolResult.failed(
+                message = "tags.bind mode 只能是 add、remove 或 replace",
                 toolName = name,
-                message = "Phase4 Gate C 只允许 tags.bind add/replace；$mode 模式暂未开放。",
                 argumentsJson = argumentsJson,
-                resultJson = JSONObject()
-                    .put("blocked", true)
-                    .put("allowed_modes", listOf("add", "replace"))
-                    .put("requested_mode", mode)
-                    .toString(),
-                errorCode = "mode_not_enabled_in_gate_c",
+                errorCode = "validation_error",
+                risk = McpRiskLevel.High,
             )
         }
-        val normalizedArguments = JSONObject(parser.raw().toString())
-            .put("mode", mode)
-            .toString()
         val commandResult = commandService.execute(
             toolName = name,
-            argumentsJson = normalizedArguments,
+            argumentsJson = parser.raw().put("mode", mode).toString(),
             source = context.toCommandSource(),
         )
-        return commandResult.toMcpToolResult(toolName = name, argumentsJson = normalizedArguments)
+        return commandResult.toMcpToolResult(toolName = name, argumentsJson = parser.raw().toString())
     }
 }

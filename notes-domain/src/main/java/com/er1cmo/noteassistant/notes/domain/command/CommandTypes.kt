@@ -84,6 +84,7 @@ enum class ToolName(val storageValue: String) {
     NotesDelete("notes.delete"),
     NotesRestore("notes.restore"),
     NotesRestoreRevision("notes.restore_revision"),
+    NotesClearDone("notes.clear_done"),
     TagsSearch("tags.search"),
     TagsBind("tags.bind"),
     TagsDelete("tags.delete"),
