@@ -30,6 +30,18 @@ class McpProtocolClient @Inject constructor() {
         val requestIdJson = payload.requestIdJson()
         val method = payload.optString("method").trim()
         return when (method) {
+            "initialize" -> McpProtocolResponse.success(
+                requestIdJson = requestIdJson,
+                method = method,
+                message = "Phase3 MCP initialize acknowledged; note mutation tools remain blocked.",
+                responseJson = buildInitializeResponseJson(requestIdJson),
+            )
+            "notifications/initialized" -> McpProtocolResponse.success(
+                requestIdJson = requestIdJson,
+                method = method,
+                message = "Phase3 MCP initialized notification acknowledged.",
+                responseJson = buildInitializedNotificationAckJson(requestIdJson),
+            )
             "tools/list" -> McpProtocolResponse.success(
                 requestIdJson = requestIdJson,
                 method = method,
@@ -110,6 +122,37 @@ class McpProtocolClient @Inject constructor() {
             message = result.message,
             responseJson = result.toJsonRpcResponseJson(requestIdJson),
         )
+    }
+
+    private fun buildInitializeResponseJson(requestIdJson: String?): String {
+        return JSONObject()
+            .put("jsonrpc", "2.0")
+            .putIdJson(requestIdJson)
+            .put(
+                "result",
+                JSONObject()
+                    .put("protocolVersion", "2024-11-05")
+                    .put(
+                        "capabilities",
+                        JSONObject()
+                            .put("tools", JSONObject().put("listChanged", false)),
+                    )
+                    .put(
+                        "serverInfo",
+                        JSONObject()
+                            .put("name", "note-assistant-android-phase3")
+                            .put("version", "0.1.0-phase3"),
+                    ),
+            )
+            .toString()
+    }
+
+    private fun buildInitializedNotificationAckJson(requestIdJson: String?): String {
+        return JSONObject()
+            .put("jsonrpc", "2.0")
+            .putIdJson(requestIdJson)
+            .put("result", JSONObject().put("acknowledged", true))
+            .toString()
     }
 
     private fun buildToolsListResponseJson(requestIdJson: String?): String {

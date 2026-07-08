@@ -16,7 +16,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
@@ -26,7 +25,7 @@ class OtaActivationClient @Inject constructor(
     private val settingsRepository: SettingsRepository,
     private val deviceIdentityManager: DeviceIdentityManager,
 ) {
-    private val httpClient: OkHttpClient = OkHttpClient.Builder()
+    private val httpClient: okhttp3.OkHttpClient = okhttp3.OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(10, TimeUnit.SECONDS)
         .writeTimeout(10, TimeUnit.SECONDS)
@@ -101,28 +100,17 @@ class OtaActivationClient @Inject constructor(
         onLog("设备需要激活，验证码：${activation.code}")
         onLog("请打开 $authorizationUrl 添加设备并输入验证码")
 
-        val activated = pollActivation(
-            otaUrl = otaUrl,
-            activation = activation,
-            onLog = onLog,
+        // GateB UX fix:
+        // Do not block the settings screen for the whole activation polling window.
+        // Xiaozhi servers usually return an activation code first; the user must enter
+        // it on the authorization website before the websocket can be fully verified.
+        // Returning Required immediately lets the UI show activationCode and the site URL.
+        return@withContext OtaActivationOutcome(
+            state = OtaActivationState.Required,
+            message = "设备需要激活。请打开 $authorizationUrl 添加设备并输入验证码：${activation.code}。完成后点击连接当前模式；如果仍无法连接，再次点击真实 OTA 刷新状态。",
+            websocketUrl = otaResponse.websocketUrl,
+            activationCode = activation.code,
         )
-        if (activated) {
-            settingsRepository.setAssistantActivationStatus(true)
-            settingsRepository.clearAssistantActivationData()
-            OtaActivationOutcome(
-                state = OtaActivationState.Activated,
-                message = "设备激活成功。",
-                websocketUrl = otaResponse.websocketUrl,
-            )
-        } else {
-            settingsRepository.setAssistantActivationStatus(false)
-            OtaActivationOutcome(
-                state = OtaActivationState.Failed,
-                message = "激活超时或失败，请确认验证码是否已在授权页面输入。",
-                websocketUrl = otaResponse.websocketUrl,
-                activationCode = activation.code,
-            )
-        }
     }
 
     private suspend fun requestOta(
