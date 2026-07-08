@@ -62,6 +62,10 @@ data class AssistantState(
     val audioUploadedFrames: Int = 0,
     val pushToTalkStopLatencyMs: Long? = null,
     val lastAudioSummary: String? = null,
+    val lastCloseCode: Int? = null,
+    val lastCloseReason: String? = null,
+    val lastReconnectDecision: String? = null,
+    val runtimeErrorCount: Int = 0,
 ) {
     val isConnected: Boolean
         get() = connection == AssistantConnectionStatus.Connected && sessionId != null

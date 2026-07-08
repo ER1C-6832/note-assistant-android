@@ -68,7 +68,7 @@ fun SettingsRoute(
     val microphonePermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission(),
     ) { granted ->
-        viewModel.startFakePtt(hasRecordAudioPermission = granted)
+        viewModel.startPtt(hasRecordAudioPermission = granted)
     }
     val startPushToTalk: () -> Unit = {
         val alreadyGranted = ContextCompat.checkSelfPermission(
@@ -76,7 +76,7 @@ fun SettingsRoute(
             Manifest.permission.RECORD_AUDIO,
         ) == PackageManager.PERMISSION_GRANTED
         if (alreadyGranted) {
-            viewModel.startFakePtt(hasRecordAudioPermission = true)
+            viewModel.startPtt(hasRecordAudioPermission = true)
         } else {
             microphonePermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
         }
@@ -124,12 +124,16 @@ fun SettingsRoute(
                 onFakeActivationClick = viewModel::runFakeActivation,
                 onRealActivationClick = viewModel::runRealActivation,
                 onConnectClick = viewModel::connectAssistant,
+                onReconnectClick = viewModel::reconnectAssistant,
                 onDisconnectClick = viewModel::disconnectAssistant,
                 onTextInputChange = viewModel::setAssistantTextInput,
                 onSendTextClick = viewModel::sendAssistantText,
                 onStartPttClick = startPushToTalk,
-                onStopPttClick = viewModel::stopFakePtt,
+                onStopPttClick = viewModel::stopPtt,
                 onSimulateToolCallClick = viewModel::simulateBlockedNoteTool,
+                onSimulateCloseClick = viewModel::simulateConnectionClosed,
+                onSimulateFailureClick = viewModel::simulateConnectionFailure,
+                onSimulateAudioFailureClick = viewModel::simulateAudioFailure,
             )
 
             SectionTitle("Phase2 命令与追溯调试")
@@ -181,15 +185,8 @@ class SettingsViewModel @Inject constructor(
         val resultText: String,
         val pendingConfirmationId: String?,
     )
-    private data class RevisionState(
-        val noteId: String,
-        val revisionId: String,
-        val text: String,
-    )
-    private data class AssistantPanelState(
-        val assistantState: AssistantState,
-        val textInput: String,
-    )
+    private data class RevisionState(val noteId: String, val revisionId: String, val text: String)
+    private data class AssistantPanelState(val assistantState: AssistantState, val textInput: String)
 
     private val themeState = combine(
         settingsRepository.homeBackgroundColor,
@@ -236,83 +233,30 @@ class SettingsViewModel @Inject constructor(
         initialValue = SettingsUiState(),
     )
 
-    fun setHomeBackgroundColor(hex: String) {
-        viewModelScope.launch { settingsRepository.setHomeBackgroundColor(hex) }
-    }
+    fun setHomeBackgroundColor(hex: String) { viewModelScope.launch { settingsRepository.setHomeBackgroundColor(hex) } }
+    fun setTagDrawerBackgroundColor(hex: String) { viewModelScope.launch { settingsRepository.setTagDrawerBackgroundColor(hex) } }
+    fun setAssistantTextInput(value: String) { assistantTextInput.value = value }
+    fun enableAssistant() { viewModelScope.launch { assistantController.enableAssistant() } }
+    fun disableAssistant() { viewModelScope.launch { assistantController.disableAssistant() } }
+    fun prepareDeviceIdentity() { viewModelScope.launch { assistantController.ensureDeviceIdentity() } }
+    fun resetDeviceIdentity() { viewModelScope.launch { assistantController.resetDeviceIdentity() } }
+    fun runFakeActivation() { viewModelScope.launch { assistantController.runFakeActivation() } }
+    fun runRealActivation() { viewModelScope.launch { assistantController.runRealActivation() } }
+    fun connectAssistant() { viewModelScope.launch { assistantController.connect() } }
+    fun reconnectAssistant() { viewModelScope.launch { assistantController.reconnect() } }
+    fun disconnectAssistant() { viewModelScope.launch { assistantController.disconnect("settings_close") } }
+    fun sendAssistantText() { viewModelScope.launch { assistantController.sendText(assistantTextInput.value) } }
+    fun startPtt(hasRecordAudioPermission: Boolean) { viewModelScope.launch { assistantController.startPushToTalk(hasRecordAudioPermission = hasRecordAudioPermission) } }
+    fun stopPtt() { viewModelScope.launch { assistantController.stopPushToTalk() } }
+    fun simulateBlockedNoteTool() { viewModelScope.launch { assistantController.simulateIncomingToolCall("notes.delete", "{\"note_id\":1}") } }
+    fun simulateConnectionClosed() { viewModelScope.launch { assistantController.simulateConnectionClosed(code = 1006, reason = "settings_debug_abnormal_close") } }
+    fun simulateConnectionFailure() { viewModelScope.launch { assistantController.simulateConnectionFailure("settings_debug_transport_failure") } }
+    fun simulateAudioFailure() { viewModelScope.launch { assistantController.simulateAudioFailure("settings_debug_audio_failure") } }
 
-    fun setTagDrawerBackgroundColor(hex: String) {
-        viewModelScope.launch { settingsRepository.setTagDrawerBackgroundColor(hex) }
-    }
-
-    fun setAssistantTextInput(value: String) {
-        assistantTextInput.value = value
-    }
-
-    fun enableAssistant() {
-        viewModelScope.launch { assistantController.enableAssistant() }
-    }
-
-    fun disableAssistant() {
-        viewModelScope.launch { assistantController.disableAssistant() }
-    }
-
-    fun prepareDeviceIdentity() {
-        viewModelScope.launch { assistantController.ensureDeviceIdentity() }
-    }
-
-    fun resetDeviceIdentity() {
-        viewModelScope.launch { assistantController.resetDeviceIdentity() }
-    }
-
-    fun runFakeActivation() {
-        viewModelScope.launch { assistantController.runFakeActivation() }
-    }
-
-    fun runRealActivation() {
-        viewModelScope.launch { assistantController.runRealActivation() }
-    }
-
-    fun connectAssistant() {
-        viewModelScope.launch { assistantController.connect() }
-    }
-
-    fun disconnectAssistant() {
-        viewModelScope.launch { assistantController.disconnect("settings_close") }
-    }
-
-    fun sendAssistantText() {
-        val text = assistantTextInput.value
-        viewModelScope.launch { assistantController.sendText(text) }
-    }
-
-    fun startFakePtt(hasRecordAudioPermission: Boolean) {
-        viewModelScope.launch { assistantController.startPushToTalk(hasRecordAudioPermission = hasRecordAudioPermission) }
-    }
-
-    fun stopFakePtt() {
-        viewModelScope.launch { assistantController.stopPushToTalk() }
-    }
-
-    fun simulateBlockedNoteTool() {
-        viewModelScope.launch { assistantController.simulateIncomingToolCall("notes.delete", "{\"note_id\":1}") }
-    }
-
-    fun setToolName(value: String) {
-        toolName.value = value
-    }
-
-    fun setArgumentsJson(value: String) {
-        argumentsJson.value = value
-    }
-
-    fun setRevisionNoteId(value: String) {
-        revisionNoteId.value = value.filter { it.isDigit() }
-    }
-
-    fun setRevisionToRestoreId(value: String) {
-        revisionToRestoreId.value = value.filter { it.isDigit() }
-    }
-
+    fun setToolName(value: String) { toolName.value = value }
+    fun setArgumentsJson(value: String) { argumentsJson.value = value }
+    fun setRevisionNoteId(value: String) { revisionNoteId.value = value.filter { it.isDigit() } }
+    fun setRevisionToRestoreId(value: String) { revisionToRestoreId.value = value.filter { it.isDigit() } }
     fun applySample(sample: ToolSample) {
         toolName.value = sample.toolName
         argumentsJson.value = sample.argumentsJson
@@ -429,18 +373,12 @@ class SettingsViewModel @Inject constructor(
     }
 
     private fun Any?.debugLong(name: String): Long? = debugValue(name)?.toString()?.toLongOrNull()
-
-    private fun Any?.debugText(name: String, fallback: String = "-"): String {
-        val text = debugValue(name)?.toString()?.trim().orEmpty()
-        return text.ifBlank { fallback }
-    }
-
+    private fun Any?.debugText(name: String, fallback: String = "-"): String = debugValue(name)?.toString()?.trim().orEmpty().ifBlank { fallback }
     private fun Any?.debugStorageValue(): String {
         val target = this ?: return "-"
         val value = target.debugValue("storageValue")?.toString()?.trim().orEmpty()
         return value.ifBlank { target.toString() }
     }
-
     private fun Any?.debugValue(name: String): Any? {
         val target = this ?: return null
         if (name.isBlank()) return null
@@ -502,27 +440,24 @@ private fun Phase3RuntimeBox(
     onFakeActivationClick: () -> Unit,
     onRealActivationClick: () -> Unit,
     onConnectClick: () -> Unit,
+    onReconnectClick: () -> Unit,
     onDisconnectClick: () -> Unit,
     onTextInputChange: (String) -> Unit,
     onSendTextClick: () -> Unit,
     onStartPttClick: () -> Unit,
     onStopPttClick: () -> Unit,
     onSimulateToolCallClick: () -> Unit,
+    onSimulateCloseClick: () -> Unit,
+    onSimulateFailureClick: () -> Unit,
+    onSimulateAudioFailureClick: () -> Unit,
 ) {
     val assistant = state.assistantState
     Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(Color.White.copy(alpha = 0.92f), RoundedCornerShape(18.dp))
-            .padding(14.dp),
+        modifier = Modifier.fillMaxWidth().background(Color.White.copy(alpha = 0.92f), RoundedCornerShape(18.dp)).padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Text("Phase3 助手运行时", color = Color(0xFF222832), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-        Text(
-            "当前是 Fake Runtime + activation + WebSocket + MCP + PTT fake audio 验证入口；Phase3 不执行便签工具。",
-            color = Color(0xFF697386),
-            style = MaterialTheme.typography.bodySmall,
-        )
+        Text("当前是 Fake/Real audio + WebSocket + MCP + error/reconnect 验证入口；Phase3 不执行便签工具。", color = Color(0xFF697386), style = MaterialTheme.typography.bodySmall)
         Text("phase=${assistant.phase.storageValue} · connection=${assistant.connection.storageValue} · activation=${assistant.activation.storageValue} · audio=${assistant.audio.storageValue}", color = Color(0xFF344054), style = MaterialTheme.typography.bodySmall)
         Text("status=${assistant.statusText}", color = Color(0xFF344054), style = MaterialTheme.typography.bodySmall)
         assistant.errorMessage?.let { Text("error=$it", color = Color(0xFFB42318), style = MaterialTheme.typography.bodySmall) }
@@ -533,14 +468,12 @@ private fun Phase3RuntimeBox(
         assistant.sessionId?.let { Text("session=$it", color = Color(0xFF697386), style = MaterialTheme.typography.bodySmall) }
         assistant.lastAssistantText?.let { Text("last assistant=$it", color = Color(0xFF344054), style = MaterialTheme.typography.bodySmall) }
         if (assistant.audioCapturedFrames > 0 || assistant.pushToTalkStopLatencyMs != null) {
-            Text(
-                "fake audio pcm=${assistant.audioCapturedFrames} · opus=${assistant.audioEncodedFrames} · uploaded=${assistant.audioUploadedFrames} · stop=${assistant.pushToTalkStopLatencyMs ?: "-"}ms",
-                color = Color(0xFF344054),
-                style = MaterialTheme.typography.bodySmall,
-            )
+            Text("audio pcm=${assistant.audioCapturedFrames} · opus=${assistant.audioEncodedFrames} · uploaded=${assistant.audioUploadedFrames} · stop=${assistant.pushToTalkStopLatencyMs ?: "-"}ms", color = Color(0xFF344054), style = MaterialTheme.typography.bodySmall)
         }
         assistant.lastAudioSummary?.let { Text("audio=$it", color = Color(0xFF697386), style = MaterialTheme.typography.bodySmall) }
         assistant.lastProtocolEvent?.let { Text("event=$it", color = Color(0xFF697386), style = MaterialTheme.typography.bodySmall) }
+        assistant.lastReconnectDecision?.let { Text("reconnect=$it · attempt=${assistant.reconnectAttempt} · errors=${assistant.runtimeErrorCount}", color = Color(0xFF697386), style = MaterialTheme.typography.bodySmall) }
+        assistant.lastCloseReason?.let { Text("last close=${assistant.lastCloseCode ?: "-"} / $it", color = Color(0xFF697386), style = MaterialTheme.typography.bodySmall) }
         assistant.lastClientJson?.let { Text("last client=${it.take(180)}", color = Color(0xFF697386), style = MaterialTheme.typography.bodySmall) }
         assistant.lastServerJson?.let { Text("last server=${it.take(180)}", color = Color(0xFF697386), style = MaterialTheme.typography.bodySmall) }
 
@@ -558,27 +491,21 @@ private fun Phase3RuntimeBox(
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = onConnectClick, shape = RoundedCornerShape(14.dp), modifier = Modifier.weight(1f)) { Text("连接 Fake") }
+            Button(onClick = onReconnectClick, shape = RoundedCornerShape(14.dp), modifier = Modifier.weight(1f)) { Text("重连") }
             Button(onClick = onDisconnectClick, shape = RoundedCornerShape(14.dp), modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6B7280))) { Text("断开") }
         }
-        OutlinedTextField(
-            value = state.assistantTextInput,
-            onValueChange = onTextInputChange,
-            label = { Text("文本对话测试") },
-            minLines = 2,
-            maxLines = 4,
-            modifier = Modifier.fillMaxWidth(),
-        )
+        OutlinedTextField(value = state.assistantTextInput, onValueChange = onTextInputChange, label = { Text("文本对话测试") }, minLines = 2, maxLines = 4, modifier = Modifier.fillMaxWidth())
         Button(onClick = onSendTextClick, shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth()) { Text("发送文本到 Fake Runtime") }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = onStartPttClick, shape = RoundedCornerShape(14.dp), modifier = Modifier.weight(1f)) { Text("开始 PTT（请求麦克风）") }
             Button(onClick = onStopPttClick, shape = RoundedCornerShape(14.dp), modifier = Modifier.weight(1f)) { Text("结束 PTT") }
         }
-        Button(
-            onClick = onSimulateToolCallClick,
-            shape = RoundedCornerShape(16.dp),
-            modifier = Modifier.fillMaxWidth(),
-            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626)),
-        ) { Text("模拟 notes.delete 工具调用并阻断") }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = onSimulateCloseClick, shape = RoundedCornerShape(14.dp), modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFB45309))) { Text("模拟异常关闭") }
+            Button(onClick = onSimulateFailureClick, shape = RoundedCornerShape(14.dp), modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFB42318))) { Text("模拟连接失败") }
+        }
+        Button(onClick = onSimulateAudioFailureClick, shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFB42318))) { Text("模拟音频失败") }
+        Button(onClick = onSimulateToolCallClick, shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626))) { Text("模拟 notes.delete 工具调用并阻断") }
     }
 }
 
@@ -592,13 +519,7 @@ private fun ToolSimulatorBox(
     onConfirmClick: () -> Unit,
     onRejectClick: () -> Unit,
 ) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(Color.White.copy(alpha = 0.92f), RoundedCornerShape(18.dp))
-            .padding(14.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
+    Column(modifier = Modifier.fillMaxWidth().background(Color.White.copy(alpha = 0.92f), RoundedCornerShape(18.dp)).padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text("Phase2 本地工具模拟器", color = Color(0xFF222832), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
         Text("支持完整 tool name + arguments JSON。高风险命令先返回 requires_confirmation，必须确认后才执行。", color = Color(0xFF697386), style = MaterialTheme.typography.bodySmall)
         Row(modifier = Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -612,13 +533,7 @@ private fun ToolSimulatorBox(
         OutlinedTextField(value = state.argumentsJson, onValueChange = onArgumentsChange, label = { Text("arguments JSON") }, minLines = 4, maxLines = 8, modifier = Modifier.fillMaxWidth())
         Button(onClick = onExecuteClick, enabled = !state.isRunning, shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth()) { Text(if (state.isRunning) "执行中……" else "执行 tools/call") }
         state.pendingConfirmationId?.let { confirmationId ->
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(Color(0xFFFFF7ED), RoundedCornerShape(16.dp))
-                    .padding(10.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
+            Column(modifier = Modifier.fillMaxWidth().background(Color(0xFFFFF7ED), RoundedCornerShape(16.dp)).padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("待确认操作", fontWeight = FontWeight.SemiBold, color = Color(0xFF9A3412))
                 Text("confirmation_id=$confirmationId", color = Color(0xFF9A3412), style = MaterialTheme.typography.bodySmall)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

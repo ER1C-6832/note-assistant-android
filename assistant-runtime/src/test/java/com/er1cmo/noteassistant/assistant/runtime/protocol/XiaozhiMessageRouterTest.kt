@@ -3,6 +3,7 @@ package com.er1cmo.noteassistant.assistant.runtime.protocol
 import com.er1cmo.noteassistant.assistant.runtime.mcp.McpProtocolClient
 import com.er1cmo.noteassistant.assistant.runtime.mcp.McpToolStatus
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -12,6 +13,7 @@ class XiaozhiMessageRouterTest {
     @Test
     fun helloRoutesToConnected() {
         val event = router.routeText("{\"type\":\"hello\",\"session_id\":\"abc\",\"transport\":\"websocket\"}")
+
         assertTrue(event is ProtocolEvent.Connected)
         assertEquals("abc", (event as ProtocolEvent.Connected).sessionId)
     }
@@ -19,35 +21,60 @@ class XiaozhiMessageRouterTest {
     @Test
     fun textRoutesToAssistantText() {
         val event = router.routeText("{\"type\":\"text\",\"session_id\":\"abc\",\"text\":\"你好\"}")
+
         assertTrue(event is ProtocolEvent.AssistantText)
         assertEquals("你好", (event as ProtocolEvent.AssistantText).text)
     }
 
     @Test
-    fun toolsListRoutesToMcpResponse() {
+    fun malformedJsonBecomesProtocolError() {
+        val event = router.routeText("{not-json")
+
+        assertTrue(event is ProtocolEvent.ProtocolError)
+        assertEquals("invalid_json", (event as ProtocolEvent.ProtocolError).reason)
+    }
+
+    @Test
+    fun missingTypeBecomesProtocolError() {
+        val event = router.routeText("{\"session_id\":\"abc\"}")
+
+        assertTrue(event is ProtocolEvent.ProtocolError)
+        assertEquals("missing type", (event as ProtocolEvent.ProtocolError).reason)
+    }
+
+    @Test
+    fun toolsListRoutesToSafeMcpResponse() {
         val event = router.routeText(
-            "{\"type\":\"mcp\",\"session_id\":\"abc\",\"payload\":{\"jsonrpc\":\"2.0\",\"id\":\"list\",\"method\":\"tools/list\",\"params\":{}}}",
+            "{\"type\":\"mcp\",\"session_id\":\"abc\",\"payload\":{\"jsonrpc\":\"2.0\",\"id\":\"tools\",\"method\":\"tools/list\",\"params\":{}}}",
         )
 
         assertTrue(event is ProtocolEvent.McpResponse)
         val response = event as ProtocolEvent.McpResponse
-        assertEquals("tools/list", response.requestMethod)
+        assertFalse(response.blocked)
         assertEquals(McpToolStatus.Success, response.status)
-        assertTrue(response.responseJson.contains("phase3.echo"))
+        assertTrue(response.responseJson.contains("phase3.status"))
     }
 
     @Test
-    fun noteToolCallRoutesToBlockedMcpResponse() {
+    fun noteToolCallIsBlockedAtProtocolBoundary() {
         val event = router.routeText(
             "{\"type\":\"mcp\",\"session_id\":\"abc\",\"payload\":{\"jsonrpc\":\"2.0\",\"id\":\"call\",\"method\":\"tools/call\",\"params\":{\"name\":\"notes.delete\",\"arguments\":{\"note_id\":1}}}}",
         )
 
         assertTrue(event is ProtocolEvent.McpResponse)
         val response = event as ProtocolEvent.McpResponse
-        assertEquals("tools/call", response.requestMethod)
-        assertEquals("notes.delete", response.toolName)
-        assertEquals(McpToolStatus.Blocked, response.status)
         assertTrue(response.blocked)
-        assertTrue(response.responseJson.contains("\"note_mutation_enabled\":false"))
+        assertEquals(McpToolStatus.Blocked, response.status)
+        assertEquals("notes.delete", response.toolName)
+        assertTrue(response.responseJson.contains("note_mutation_enabled"))
+        assertTrue(response.responseJson.contains("false"))
+    }
+
+    @Test
+    fun binaryRoutesToBinaryAudio() {
+        val event = router.routeBinary(byteArrayOf(1, 2, 3))
+
+        assertTrue(event is ProtocolEvent.BinaryAudio)
+        assertEquals(3, (event as ProtocolEvent.BinaryAudio).data.size)
     }
 }

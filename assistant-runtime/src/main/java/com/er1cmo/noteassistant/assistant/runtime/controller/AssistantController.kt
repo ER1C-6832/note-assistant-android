@@ -9,6 +9,7 @@ interface AssistantController {
     suspend fun enableAssistant()
     suspend fun disableAssistant()
     suspend fun connect()
+    suspend fun reconnect()
     suspend fun disconnect(reason: String = "user_close")
     suspend fun sendText(text: String)
     suspend fun startPushToTalk(hasRecordAudioPermission: Boolean)
@@ -19,4 +20,8 @@ interface AssistantController {
     suspend fun resetDeviceIdentity()
     suspend fun runFakeActivation()
     suspend fun runRealActivation()
+
+    suspend fun simulateConnectionClosed(code: Int = 1006, reason: String = "debug_abnormal_close")
+    suspend fun simulateConnectionFailure(message: String = "debug_transport_failure")
+    suspend fun simulateAudioFailure(message: String = "debug_audio_failure")
 }

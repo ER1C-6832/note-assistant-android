@@ -6,10 +6,11 @@ import com.er1cmo.noteassistant.assistant.runtime.activation.OtaActivationState
 import com.er1cmo.noteassistant.assistant.runtime.audio.RealAudioEngine
 import com.er1cmo.noteassistant.assistant.runtime.conversation.ConversationStateMachine
 import com.er1cmo.noteassistant.assistant.runtime.identity.DeviceIdentityManager
-import com.er1cmo.noteassistant.assistant.runtime.mcp.McpProtocolClient
 import com.er1cmo.noteassistant.assistant.runtime.network.FakeXiaozhiWebSocketClient
 import com.er1cmo.noteassistant.assistant.runtime.network.XiaozhiConnectionConfig
+import com.er1cmo.noteassistant.assistant.runtime.network.XiaozhiWebSocketEvent
 import com.er1cmo.noteassistant.assistant.runtime.protocol.ProtocolEvent
+import com.er1cmo.noteassistant.assistant.runtime.recovery.ReconnectPolicy
 import com.er1cmo.noteassistant.assistant.runtime.state.AssistantActivationStatus
 import com.er1cmo.noteassistant.assistant.runtime.state.AssistantAudioStatus
 import com.er1cmo.noteassistant.assistant.runtime.state.AssistantConnectionStatus
@@ -31,11 +32,11 @@ import kotlinx.coroutines.launch
 class LocalAssistantController @Inject constructor(
     private val settingsRepository: SettingsRepository,
     private val stateMachine: ConversationStateMachine,
-    private val mcpProtocolClient: McpProtocolClient,
     private val deviceIdentityManager: DeviceIdentityManager,
     private val otaActivationClient: OtaActivationClient,
     private val fakeWebSocketClient: FakeXiaozhiWebSocketClient,
     private val realAudioEngine: RealAudioEngine,
+    private val reconnectPolicy: ReconnectPolicy,
 ) : AssistantController {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val mutableState = MutableStateFlow(AssistantState.disabled(nowMillis()))
@@ -73,6 +74,7 @@ class LocalAssistantController @Inject constructor(
             audioUploadedFrames = 0,
             pushToTalkStopLatencyMs = null,
             lastAudioSummary = null,
+            lastReconnectDecision = "assistant_disabled",
         )
     }
 
@@ -112,27 +114,37 @@ class LocalAssistantController @Inject constructor(
                 lastClientJson = result.outgoingHelloJson,
                 lastServerJson = result.incomingHelloJson,
                 lastProtocolEvent = result.event.javaClass.simpleName,
+                lastReconnectDecision = "connect_hello_failed",
             )
         }
     }
 
+    override suspend fun reconnect() {
+        fakeWebSocketClient.close("manual_reconnect")
+        realAudioEngine.cancel()
+        val nextAttempt = mutableState.value.reconnectAttempt + 1
+        mutableState.value = stateMachine.reconnecting(
+            current = mutableState.value,
+            reason = "manual_reconnect",
+            attempt = nextAttempt,
+            nowMillis = nowMillis(),
+        ).copy(lastReconnectDecision = "manual_reconnect_attempt_$nextAttempt")
+        connect()
+    }
+
     override suspend fun disconnect(reason: String) {
         realAudioEngine.cancel()
-        fakeWebSocketClient.close(reason)
+        val closed = fakeWebSocketClient.close(reason)
         val current = mutableState.value
-        mutableState.value = current.copy(
-            phase = if (current.assistantEnabled) AssistantPhase.Idle else AssistantPhase.Disabled,
-            connection = AssistantConnectionStatus.Disconnected,
-            audio = AssistantAudioStatus.Idle,
-            statusText = "助手连接已关闭：$reason",
-            errorMessage = null,
-            sessionId = null,
+        mutableState.value = stateMachine.disconnected(current, reason, nowMillis()).copy(
             audioCapturedFrames = 0,
             audioEncodedFrames = 0,
             audioUploadedFrames = 0,
             pushToTalkStopLatencyMs = null,
             lastAudioSummary = null,
-            lastEventAt = nowMillis(),
+            lastCloseCode = closed.code,
+            lastCloseReason = closed.reason,
+            lastReconnectDecision = "manual_disconnect",
         )
     }
 
@@ -153,7 +165,7 @@ class LocalAssistantController @Inject constructor(
                 current = thinking,
                 message = turn.message,
                 nowMillis = nowMillis(),
-            )
+            ).copy(lastReconnectDecision = "send_text_failed_not_connected")
             return
         }
         delay(80)
@@ -182,7 +194,7 @@ class LocalAssistantController @Inject constructor(
                 nowMillis = nowMillis(),
             ).copy(
                 statusText = "麦克风权限被拒绝，真实 AudioRecord 未启动",
-                lastAudioSummary = "未获得 RECORD_AUDIO，未创建 AudioRecord / MediaCodec OpusEncoder",
+                lastAudioSummary = "未获得 RECORD_AUDIO，未创建 AudioRecord / OpusEncoder",
             )
             return
         }
@@ -198,15 +210,15 @@ class LocalAssistantController @Inject constructor(
             )
             return
         }
-        val audioStart = realAudioEngine.startRecording(nowMillis()) { opusFrame ->
-            fakeWebSocketClient.sendAudioFrame(opusFrame).success
+        val audioStart = realAudioEngine.startRecording(nowMillis()) { packet ->
+            fakeWebSocketClient.sendAudioFrame(packet).success
         }
-        if (!audioStart.started && !realAudioEngine.isRecording()) {
+        if (!audioStart.started) {
             mutableState.value = stateMachine.error(
-                current = mutableState.value,
+                current = mutableState.value.copy(audio = AssistantAudioStatus.Error),
                 message = audioStart.summary,
                 nowMillis = nowMillis(),
-            )
+            ).copy(lastAudioSummary = audioStart.summary)
             return
         }
         mutableState.value = stateMachine.startListening(mutableState.value, nowMillis()).copy(
@@ -228,20 +240,15 @@ class LocalAssistantController @Inject constructor(
 
     override suspend fun stopPushToTalk() {
         val stoppedAudio = realAudioEngine.stopRecordingAndAwait(maxStopLatencyMs = 300L)
-        val uploaded = fakeWebSocketClient.uploadedAudioFrameCount()
         val listenStop = fakeWebSocketClient.sendStopListening()
         val stopped = stateMachine.stopListening(mutableState.value, nowMillis())
-        val baseSummary = buildString {
-            append(stoppedAudio.summary)
-            append("；AudioRecord processing=${stoppedAudio.processingSummary}")
-        }
         mutableState.value = stopped.copy(
             phase = AssistantPhase.Thinking,
             audio = AssistantAudioStatus.Idle,
             statusText = if (stoppedAudio.stoppedWithinBudget) {
-                "真实音频已在 ${stoppedAudio.stopLatencyMs}ms 内停止，等待助手回复"
+                "真实 Audio 已在 ${stoppedAudio.stopLatencyMs}ms 内停止，等待助手回复"
             } else {
-                "真实音频停止超时：${stoppedAudio.stopLatencyMs}ms"
+                "真实 Audio 停止超时：${stoppedAudio.stopLatencyMs}ms"
             },
             errorMessage = stoppedAudio.errorMessage ?: if (stoppedAudio.stoppedWithinBudget) null else "PTT release 后停止超过 300ms",
             lastClientJson = listenStop.outgoingJson,
@@ -249,42 +256,45 @@ class LocalAssistantController @Inject constructor(
             lastProtocolEvent = listenStop.event.javaClass.simpleName,
             audioCapturedFrames = stoppedAudio.pcmFrames,
             audioEncodedFrames = stoppedAudio.opusFrames,
-            audioUploadedFrames = uploaded,
+            audioUploadedFrames = fakeWebSocketClient.uploadedAudioFrameCount(),
             pushToTalkStopLatencyMs = stoppedAudio.stopLatencyMs,
-            lastAudioSummary = baseSummary,
+            lastAudioSummary = stoppedAudio.summary,
             lastEventAt = nowMillis(),
         )
-        if (!stoppedAudio.stoppedWithinBudget || stoppedAudio.errorMessage != null) return
-
+        if (!stoppedAudio.stoppedWithinBudget || stoppedAudio.errorMessage != null) {
+            mutableState.value = stateMachine.error(
+                current = mutableState.value.copy(audio = AssistantAudioStatus.Error),
+                message = stoppedAudio.errorMessage ?: "真实音频停止失败或超时",
+                nowMillis = nowMillis(),
+            ).copy(lastAudioSummary = stoppedAudio.summary)
+            return
+        }
         delay(80)
         val speaking = stateMachine.speaking(mutableState.value, nowMillis())
         mutableState.value = speaking.copy(
-            lastAssistantText = "真实音频上行完成：已上传 $uploaded 帧 Opus，开始用 loopback 模拟服务端二进制音频下行。",
+            lastAssistantText = "Real Audio：收到 ${fakeWebSocketClient.uploadedAudioFrameCount()} 帧 Opus，开始验证下行解码播放。",
             audioCapturedFrames = stoppedAudio.pcmFrames,
             audioEncodedFrames = stoppedAudio.opusFrames,
-            audioUploadedFrames = uploaded,
+            audioUploadedFrames = fakeWebSocketClient.uploadedAudioFrameCount(),
             pushToTalkStopLatencyMs = stoppedAudio.stopLatencyMs,
-            lastAudioSummary = baseSummary,
+            lastAudioSummary = stoppedAudio.summary,
         )
-
         val playback = realAudioEngine.playOpusFrames(stoppedAudio.encodedFrames)
-        delay(80)
         mutableState.value = stateMachine.assistantText(
             current = mutableState.value,
             text = if (playback.success) {
-                "Real Audio：Opus 上行和 AudioTrack 下行播放验证完成。PTT release->stop=${stoppedAudio.stopLatencyMs}ms。"
+                "Real Audio 验证完成：${playback.summary}"
             } else {
-                "Real Audio：上行完成，但下行播放未成功：${playback.summary}"
+                "Real Audio 播放验证未通过：${playback.summary}"
             },
             nowMillis = nowMillis(),
         ).copy(
             audioCapturedFrames = stoppedAudio.pcmFrames,
             audioEncodedFrames = stoppedAudio.opusFrames,
-            audioUploadedFrames = uploaded,
+            audioUploadedFrames = fakeWebSocketClient.uploadedAudioFrameCount(),
             pushToTalkStopLatencyMs = stoppedAudio.stopLatencyMs,
-            lastAudioSummary = "$baseSummary；${playback.summary}",
-            lastServerJson = "{\"type\":\"binary_audio_loopback\",\"opus_frames\":${playback.opusFrames},\"pcm_frames\":${playback.pcmFrames},\"pcm_bytes\":${playback.pcmBytes}}",
-            lastProtocolEvent = "BinaryAudioLoopback",
+            lastAudioSummary = stoppedAudio.summary + "；" + playback.summary,
+            errorMessage = if (playback.success) null else playback.summary,
         )
     }
 
@@ -293,7 +303,7 @@ class LocalAssistantController @Inject constructor(
         val turn = fakeWebSocketClient.simulateIncomingToolCall(toolName, argumentsJson)
         mutableState.value = mutableState.value.copy(
             lastAssistantText = turn.message,
-            statusText = if (turn.success) "MCP tools/call 已安全处理：${toolName}" else turn.message,
+            statusText = if (turn.success) "MCP tools/call 已安全处理：$toolName" else turn.message,
             lastServerJson = turn.incomingJson,
             lastClientJson = turn.outgoingResponseJson,
             lastProtocolEvent = turn.event.javaClass.simpleName,
@@ -333,6 +343,7 @@ class LocalAssistantController @Inject constructor(
             audioUploadedFrames = 0,
             pushToTalkStopLatencyMs = null,
             lastAudioSummary = null,
+            lastReconnectDecision = "identity_reset",
             statusText = "设备身份已重置：${identity.displayDeviceId}，需要重新激活。",
             errorMessage = null,
             lastEventAt = nowMillis(),
@@ -402,6 +413,80 @@ class LocalAssistantController @Inject constructor(
                     nowMillis = nowMillis(),
                 )
             }
+    }
+
+    override suspend fun simulateConnectionClosed(code: Int, reason: String) {
+        realAudioEngine.cancel()
+        val closed = fakeWebSocketClient.simulateServerClose(code, reason)
+        handleTransportClosed(closed)
+    }
+
+    override suspend fun simulateConnectionFailure(message: String) {
+        realAudioEngine.cancel()
+        val failure = fakeWebSocketClient.simulateTransportFailure(message)
+        val current = mutableState.value
+        val decision = reconnectPolicy.decideFailure(
+            assistantEnabled = current.assistantEnabled,
+            currentAttempt = current.reconnectAttempt,
+        )
+        mutableState.value = stateMachine.error(
+            current = current.copy(
+                connection = AssistantConnectionStatus.Disconnected,
+                sessionId = null,
+                audio = AssistantAudioStatus.Idle,
+            ),
+            message = failure.message,
+            nowMillis = nowMillis(),
+        ).copy(
+            lastProtocolEvent = failure.javaClass.simpleName,
+            lastReconnectDecision = decision.decisionLabel,
+            lastCloseReason = failure.message,
+        )
+    }
+
+    override suspend fun simulateAudioFailure(message: String) {
+        realAudioEngine.cancel()
+        mutableState.value = stateMachine.error(
+            current = mutableState.value.copy(audio = AssistantAudioStatus.Error),
+            message = message,
+            nowMillis = nowMillis(),
+        ).copy(
+            statusText = "音频链路失败：$message",
+            lastAudioSummary = "已停止录音/播放并释放真实音频资源：$message",
+            pushToTalkStopLatencyMs = null,
+        )
+    }
+
+    private suspend fun handleTransportClosed(closed: XiaozhiWebSocketEvent.Closed) {
+        val current = mutableState.value
+        val decision = reconnectPolicy.decideClose(
+            closeCode = closed.code,
+            reason = closed.reason,
+            assistantEnabled = current.assistantEnabled,
+            currentAttempt = current.reconnectAttempt,
+        )
+        if (!decision.shouldReconnect) {
+            mutableState.value = stateMachine.disconnected(current, closed.reason, nowMillis()).copy(
+                lastCloseCode = closed.code,
+                lastCloseReason = closed.reason,
+                lastReconnectDecision = decision.decisionLabel,
+                statusText = decision.userMessage,
+            )
+            return
+        }
+        mutableState.value = stateMachine.reconnecting(
+            current = current,
+            reason = closed.reason,
+            attempt = decision.nextAttempt,
+            nowMillis = nowMillis(),
+        ).copy(
+            lastCloseCode = closed.code,
+            lastCloseReason = closed.reason,
+            lastReconnectDecision = decision.decisionLabel,
+            statusText = decision.userMessage,
+        )
+        delay(120)
+        connect()
     }
 
     private fun nowMillis(): Long = System.currentTimeMillis()

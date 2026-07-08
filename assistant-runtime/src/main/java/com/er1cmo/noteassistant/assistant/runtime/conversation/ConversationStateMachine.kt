@@ -11,7 +11,7 @@ class ConversationStateMachine @Inject constructor() {
     fun enable(current: AssistantState, nowMillis: Long): AssistantState = current.copy(
         phase = AssistantPhase.Idle,
         connection = AssistantConnectionStatus.Disconnected,
-        activation = AssistantActivationStatus.Unknown,
+        activation = current.activation,
         audio = AssistantAudioStatus.Idle,
         statusText = "助手已启用，等待连接",
         errorMessage = null,
@@ -38,6 +38,7 @@ class ConversationStateMachine @Inject constructor() {
         return current.copy(
             phase = AssistantPhase.Connecting,
             connection = AssistantConnectionStatus.Connecting,
+            audio = AssistantAudioStatus.Idle,
             statusText = "正在连接助手运行时",
             errorMessage = null,
             lastEventAt = nowMillis,
@@ -51,10 +52,35 @@ class ConversationStateMachine @Inject constructor() {
             connection = AssistantConnectionStatus.Connected,
             activation = AssistantActivationStatus.Activated,
             audio = AssistantAudioStatus.Idle,
-            statusText = "助手已连接（Fake Runtime）",
+            statusText = "助手已连接",
             errorMessage = null,
             lastEventAt = nowMillis,
             sessionId = sessionId,
+            reconnectAttempt = 0,
+        )
+    }
+
+    fun disconnected(current: AssistantState, reason: String, nowMillis: Long): AssistantState = current.copy(
+        phase = if (current.assistantEnabled) AssistantPhase.Idle else AssistantPhase.Disabled,
+        connection = AssistantConnectionStatus.Disconnected,
+        audio = AssistantAudioStatus.Idle,
+        statusText = "助手连接已关闭：$reason",
+        errorMessage = null,
+        sessionId = null,
+        lastEventAt = nowMillis,
+    )
+
+    fun reconnecting(current: AssistantState, reason: String, attempt: Int, nowMillis: Long): AssistantState {
+        if (!current.assistantEnabled) return disconnected(current, reason, nowMillis)
+        return current.copy(
+            phase = AssistantPhase.Reconnecting,
+            connection = AssistantConnectionStatus.Connecting,
+            audio = AssistantAudioStatus.Idle,
+            statusText = "连接异常，准备第 $attempt 次重连：$reason",
+            errorMessage = null,
+            sessionId = null,
+            reconnectAttempt = attempt,
+            lastEventAt = nowMillis,
         )
     }
 
@@ -86,7 +112,7 @@ class ConversationStateMachine @Inject constructor() {
         return current.copy(
             phase = AssistantPhase.Listening,
             audio = AssistantAudioStatus.Recording,
-            statusText = "按住说话中（Fake Audio）",
+            statusText = "按住说话中",
             errorMessage = null,
             lastEventAt = nowMillis,
         )
@@ -107,7 +133,7 @@ class ConversationStateMachine @Inject constructor() {
     fun speaking(current: AssistantState, nowMillis: Long): AssistantState = current.copy(
         phase = AssistantPhase.Speaking,
         audio = AssistantAudioStatus.Playing,
-        statusText = "助手正在播放回复（Fake TTS）",
+        statusText = "助手正在播放回复",
         errorMessage = null,
         lastEventAt = nowMillis,
     )
@@ -117,6 +143,7 @@ class ConversationStateMachine @Inject constructor() {
         audio = if (current.audio == AssistantAudioStatus.Recording) AssistantAudioStatus.Error else current.audio,
         statusText = "助手运行时错误",
         errorMessage = message,
+        runtimeErrorCount = current.runtimeErrorCount + 1,
         lastEventAt = nowMillis,
     )
 }

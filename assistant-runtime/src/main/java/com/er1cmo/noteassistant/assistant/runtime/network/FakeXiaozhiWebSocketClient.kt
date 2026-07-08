@@ -87,20 +87,19 @@ class FakeXiaozhiWebSocketClient @Inject constructor(
         )
     }
 
-    fun sendAudioFrame(fakeOpusFrame: ByteArray): FakeWebSocketAudioTurn {
-        val currentSession = sessionId
-        if (!connected || currentSession.isNullOrBlank()) {
+    fun sendAudioFrame(opusFrame: ByteArray): FakeWebSocketAudioTurn {
+        if (!connected || sessionId.isNullOrBlank()) {
             return FakeWebSocketAudioTurn(
                 success = false,
                 uploadedAudioFrames = uploadedAudioFrames,
                 message = "Fake WebSocket 未连接，无法上传音频帧",
             )
         }
-        if (fakeOpusFrame.isEmpty()) {
+        if (opusFrame.isEmpty()) {
             return FakeWebSocketAudioTurn(
                 success = false,
                 uploadedAudioFrames = uploadedAudioFrames,
-                message = "Fake Opus 帧为空，未上传",
+                message = "Opus 帧为空，未上传",
             )
         }
         uploadedAudioFrames += 1
@@ -136,7 +135,8 @@ class FakeXiaozhiWebSocketClient @Inject constructor(
         toolName: String,
         argumentsJson: String,
     ): FakeWebSocketMcpTurn {
-        val payloadJson = "{\"jsonrpc\":\"2.0\",\"id\":\"phase3-tools-call\",\"method\":\"tools/call\",\"params\":{\"name\":\"${toolName.escapeJson()}\",\"arguments\":${argumentsJson.ifBlank { "{}" }}}}"
+        val safeArguments = argumentsJson.ifBlank { "{}" }
+        val payloadJson = "{\"jsonrpc\":\"2.0\",\"id\":\"phase3-tools-call\",\"method\":\"tools/call\",\"params\":{\"name\":\"${toolName.escapeJson()}\",\"arguments\":$safeArguments}}"
         return simulateIncomingMcpRequest(payloadJson)
     }
 
@@ -171,6 +171,20 @@ class FakeXiaozhiWebSocketClient @Inject constructor(
             event = event,
             message = message,
         )
+    }
+
+    fun simulateServerClose(code: Int = 1006, reason: String = "debug_abnormal_close"): XiaozhiWebSocketEvent.Closed {
+        connected = false
+        sessionId = null
+        uploadedAudioFrames = 0
+        return XiaozhiWebSocketEvent.Closed(code = code, reason = reason)
+    }
+
+    fun simulateTransportFailure(message: String = "debug_transport_failure"): XiaozhiWebSocketEvent.Error {
+        connected = false
+        sessionId = null
+        uploadedAudioFrames = 0
+        return XiaozhiWebSocketEvent.Error(message)
     }
 
     fun close(reason: String = "fake_close"): XiaozhiWebSocketEvent.Closed {
