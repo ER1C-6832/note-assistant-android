@@ -32,6 +32,7 @@ dependencies {
     kapt(libs.hilt.compiler)
     implementation(project(":core-common"))
     implementation(project(":app-settings"))
+    implementation(project(":assistant-mcp-base"))
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.okhttp)
 

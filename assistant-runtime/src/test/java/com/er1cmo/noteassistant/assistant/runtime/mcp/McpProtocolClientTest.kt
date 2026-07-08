@@ -1,5 +1,6 @@
 package com.er1cmo.noteassistant.assistant.runtime.mcp
 
+import com.er1cmo.noteassistant.assistant.mcpbase.McpToolStatus
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -29,7 +30,7 @@ class McpProtocolClientTest {
         assertTrue(response.blocked)
         assertEquals("notes.delete", response.toolName)
         assertTrue(response.responseJson.contains("\"blocked\":true"))
-        assertTrue(response.responseJson.contains("\"note_mutation_enabled\":false"))
+        assertTrue(response.responseJson.contains("\"requires_confirmation\":false"))
     }
 
     @Test

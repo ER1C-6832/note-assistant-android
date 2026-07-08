@@ -1,5 +1,11 @@
 package com.er1cmo.noteassistant.assistant.runtime.mcp
 
+import com.er1cmo.noteassistant.assistant.mcpbase.McpResultMapper
+import com.er1cmo.noteassistant.assistant.mcpbase.McpRiskLevel
+import com.er1cmo.noteassistant.assistant.mcpbase.McpToolDescriptor
+import com.er1cmo.noteassistant.assistant.mcpbase.McpToolResult
+import com.er1cmo.noteassistant.assistant.mcpbase.McpToolStatus
+import com.er1cmo.noteassistant.assistant.mcpbase.requestIdJson
 import javax.inject.Inject
 import javax.inject.Singleton
 import org.json.JSONArray
@@ -11,12 +17,16 @@ class McpProtocolClient @Inject constructor() {
         McpToolDescriptor(
             name = "phase3.echo",
             description = "Phase3 fake runtime echo tool. It does not read or mutate notes.",
-            readOnly = true,
+            inputSchemaJson = "{\"type\":\"object\",\"additionalProperties\":true}",
+            riskLevel = McpRiskLevel.Low,
+            mutates = false,
         ),
         McpToolDescriptor(
             name = "phase3.status",
             description = "Returns assistant runtime status metadata only.",
-            readOnly = true,
+            inputSchemaJson = "{\"type\":\"object\",\"additionalProperties\":true}",
+            riskLevel = McpRiskLevel.Low,
+            mutates = false,
         ),
     )
 
@@ -46,7 +56,7 @@ class McpProtocolClient @Inject constructor() {
                 requestIdJson = requestIdJson,
                 method = method,
                 message = "Phase3 tools/list returned safe runtime-only tools.",
-                responseJson = buildToolsListResponseJson(requestIdJson),
+                responseJson = McpResultMapper.toolsListResponse(requestIdJson, toolsList()),
             )
             "tools/call" -> handleToolsCall(payload = payload, requestIdJson = requestIdJson, method = method)
             else -> McpProtocolResponse.error(
@@ -64,6 +74,11 @@ class McpProtocolClient @Inject constructor() {
                 toolName = toolName,
                 message = "Phase3 已收到工具调用，但便签工具执行被阻断；真实执行从 Phase4 开始并必须走 NoteCommandService。",
                 argumentsJson = argumentsJson,
+                resultJson = JSONObject()
+                    .put("blocked", true)
+                    .put("phase", "phase3")
+                    .put("note_mutation_enabled", false)
+                    .toString(),
             )
             normalized == "phase3.echo" -> McpToolResult.success(
                 toolName = toolName,
@@ -117,10 +132,10 @@ class McpProtocolClient @Inject constructor() {
             requestIdJson = requestIdJson,
             method = method,
             toolName = result.toolName,
-            status = result.status,
-            blocked = result.status != McpToolStatus.Success,
+            status = result.statusEnum,
+            blocked = result.statusEnum != McpToolStatus.Success,
             message = result.message,
-            responseJson = result.toJsonRpcResponseJson(requestIdJson),
+            responseJson = McpResultMapper.toolsCallResponse(requestIdJson, result),
         )
     }
 
@@ -155,41 +170,12 @@ class McpProtocolClient @Inject constructor() {
             .toString()
     }
 
-    private fun buildToolsListResponseJson(requestIdJson: String?): String {
-        val tools = JSONArray()
-        toolsList().forEach { descriptor ->
-            tools.put(
-                JSONObject()
-                    .put("name", descriptor.name)
-                    .put("description", descriptor.description)
-                    .put(
-                        "inputSchema",
-                        JSONObject()
-                            .put("type", "object")
-                            .put("additionalProperties", true),
-                    )
-                    .put("readOnly", descriptor.readOnly),
-            )
-        }
-        return JSONObject()
-            .put("jsonrpc", "2.0")
-            .putIdJson(requestIdJson)
-            .put("result", JSONObject().put("tools", tools))
-            .toString()
-    }
-
     private fun isNoteMutationTool(normalizedToolName: String): Boolean {
         if (normalizedToolName.startsWith("notes.")) return true
         if (normalizedToolName.startsWith("tags.")) return true
         return false
     }
 }
-
-data class McpToolDescriptor(
-    val name: String,
-    val description: String,
-    val readOnly: Boolean,
-)
 
 data class McpProtocolResponse(
     val requestIdJson: String?,
@@ -220,112 +206,19 @@ data class McpProtocolResponse(
             requestIdJson: String?,
             method: String?,
             message: String,
-        ): McpProtocolResponse {
-            val responseJson = JSONObject()
-                .put("jsonrpc", "2.0")
-                .putIdJson(requestIdJson)
-                .put(
-                    "error",
-                    JSONObject()
-                        .put("code", -32601)
-                        .put("message", message)
-                        .put("data", JSONObject().put("phase", "phase3")),
-                )
-                .toString()
-            return McpProtocolResponse(
-                requestIdJson = requestIdJson,
-                method = method,
-                toolName = null,
-                status = McpToolStatus.NotImplemented,
-                blocked = true,
-                message = message,
-                responseJson = responseJson,
-            )
-        }
-    }
-}
-
-data class McpToolResult(
-    val toolName: String,
-    val status: McpToolStatus,
-    val message: String,
-    val resultJson: String? = null,
-    val argumentsJson: String? = null,
-) {
-    fun toJsonRpcResponseJson(requestIdJson: String?): String {
-        val content = JSONArray().put(
-            JSONObject()
-                .put("type", "text")
-                .put("text", message),
-        )
-        val structuredContent = JSONObject()
-            .put("phase", "phase3")
-            .put("toolName", toolName)
-            .put("note_mutation_enabled", false)
-            .put("blocked", status != McpToolStatus.Success)
-            .put("status", status.storageValue)
-        argumentsJson?.let { structuredContent.put("arguments", it.toJsonObjectOrString()) }
-        resultJson?.let { structuredContent.put("result", it.toJsonObjectOrString()) }
-        return JSONObject()
-            .put("jsonrpc", "2.0")
-            .putIdJson(requestIdJson)
-            .put(
-                "result",
-                JSONObject()
-                    .put("content", content)
-                    .put("isError", status != McpToolStatus.Success)
-                    .put("structuredContent", structuredContent),
-            )
-            .toString()
-    }
-
-    companion object {
-        fun success(toolName: String, message: String, resultJson: String): McpToolResult = McpToolResult(
-            toolName = toolName,
-            status = McpToolStatus.Success,
-            message = message,
-            resultJson = resultJson,
-        )
-
-        fun blocked(toolName: String, message: String, argumentsJson: String): McpToolResult = McpToolResult(
-            toolName = toolName,
-            status = McpToolStatus.Blocked,
-            message = message,
-            argumentsJson = argumentsJson,
-            resultJson = JSONObject()
-                .put("blocked", true)
-                .put("phase", "phase3")
-                .put("note_mutation_enabled", false)
-                .toString(),
-        )
-
-        fun notImplemented(toolName: String, message: String, argumentsJson: String): McpToolResult = McpToolResult(
-            toolName = toolName,
+        ): McpProtocolResponse = McpProtocolResponse(
+            requestIdJson = requestIdJson,
+            method = method,
+            toolName = null,
             status = McpToolStatus.NotImplemented,
+            blocked = true,
             message = message,
-            argumentsJson = argumentsJson,
-            resultJson = JSONObject()
-                .put("not_implemented", true)
-                .put("phase", "phase3")
-                .put("note_mutation_enabled", false)
-                .toString(),
+            responseJson = McpResultMapper.errorResponse(
+                requestIdJson = requestIdJson,
+                message = message,
+                data = JSONObject().put("phase", "phase3"),
+            ),
         )
-    }
-}
-
-enum class McpToolStatus(val storageValue: String) {
-    Success("success"),
-    Blocked("blocked"),
-    NotImplemented("not_implemented"),
-}
-
-private fun JSONObject.requestIdJson(): String? {
-    if (!has("id") || isNull("id")) return null
-    val id = opt("id") ?: return null
-    return when (id) {
-        is Number -> id.toString()
-        is Boolean -> id.toString()
-        else -> JSONObject.quote(id.toString())
     }
 }
 
