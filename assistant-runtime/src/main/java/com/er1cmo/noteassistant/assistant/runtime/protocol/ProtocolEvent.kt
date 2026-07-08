@@ -1,6 +1,6 @@
 package com.er1cmo.noteassistant.assistant.runtime.protocol
 
-import com.er1cmo.noteassistant.assistant.runtime.mcp.McpToolStatus
+import com.er1cmo.noteassistant.assistant.mcpbase.McpToolStatus
 
 sealed interface ProtocolEvent {
     data class Connected(val sessionId: String) : ProtocolEvent

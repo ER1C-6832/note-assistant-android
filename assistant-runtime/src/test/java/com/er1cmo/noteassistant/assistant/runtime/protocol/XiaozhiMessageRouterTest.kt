@@ -1,7 +1,7 @@
 package com.er1cmo.noteassistant.assistant.runtime.protocol
 
+import com.er1cmo.noteassistant.assistant.mcpbase.McpToolStatus
 import com.er1cmo.noteassistant.assistant.runtime.mcp.McpProtocolClient
-import com.er1cmo.noteassistant.assistant.runtime.mcp.McpToolStatus
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -66,7 +66,7 @@ class XiaozhiMessageRouterTest {
         assertTrue(response.blocked)
         assertEquals(McpToolStatus.Blocked, response.status)
         assertEquals("notes.delete", response.toolName)
-        assertTrue(response.responseJson.contains("note_mutation_enabled"))
+        assertTrue(response.responseJson.contains("requires_confirmation"))
         assertTrue(response.responseJson.contains("false"))
     }
 

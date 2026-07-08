@@ -1,15 +1,15 @@
 package com.er1cmo.noteassistant.assistant.runtime.network
 
+import com.er1cmo.noteassistant.assistant.mcpbase.McpToolStatus
 import com.er1cmo.noteassistant.assistant.runtime.mcp.McpProtocolClient
-import com.er1cmo.noteassistant.assistant.runtime.mcp.McpToolStatus
 import com.er1cmo.noteassistant.assistant.runtime.protocol.ProtocolEvent
 import com.er1cmo.noteassistant.assistant.runtime.protocol.XiaozhiMessageBuilder
 import com.er1cmo.noteassistant.assistant.runtime.protocol.XiaozhiMessageRouter
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertTrue
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class FakeXiaozhiWebSocketClientTest {
@@ -90,7 +90,7 @@ class FakeXiaozhiWebSocketClientTest {
         val response = turn.event as ProtocolEvent.McpResponse
         assertTrue(response.blocked)
         assertEquals(McpToolStatus.Blocked, response.status)
-        assertTrue(turn.outgoingResponseJson?.contains("note_mutation_enabled") == true)
+        assertTrue(turn.outgoingResponseJson?.contains("requires_confirmation") == true)
     }
 
     @Test
