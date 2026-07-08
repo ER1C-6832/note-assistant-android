@@ -6,6 +6,9 @@ import com.er1cmo.noteassistant.assistant.runtime.activation.OtaActivationState
 import com.er1cmo.noteassistant.assistant.runtime.conversation.ConversationStateMachine
 import com.er1cmo.noteassistant.assistant.runtime.identity.DeviceIdentityManager
 import com.er1cmo.noteassistant.assistant.runtime.mcp.McpProtocolClient
+import com.er1cmo.noteassistant.assistant.runtime.network.FakeXiaozhiWebSocketClient
+import com.er1cmo.noteassistant.assistant.runtime.network.XiaozhiConnectionConfig
+import com.er1cmo.noteassistant.assistant.runtime.protocol.ProtocolEvent
 import com.er1cmo.noteassistant.assistant.runtime.state.AssistantActivationStatus
 import com.er1cmo.noteassistant.assistant.runtime.state.AssistantAudioStatus
 import com.er1cmo.noteassistant.assistant.runtime.state.AssistantConnectionStatus
@@ -20,6 +23,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 @Singleton
@@ -29,6 +33,7 @@ class LocalAssistantController @Inject constructor(
     private val mcpProtocolClient: McpProtocolClient,
     private val deviceIdentityManager: DeviceIdentityManager,
     private val otaActivationClient: OtaActivationClient,
+    private val fakeWebSocketClient: FakeXiaozhiWebSocketClient,
 ) : AssistantController {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val mutableState = MutableStateFlow(AssistantState.disabled(nowMillis()))
@@ -55,6 +60,7 @@ class LocalAssistantController @Inject constructor(
 
     override suspend fun disableAssistant() {
         settingsRepository.setAssistantEnabled(false)
+        fakeWebSocketClient.close("assistant_disabled")
         mutableState.value = stateMachine.disable(mutableState.value, nowMillis()).copy(
             connection = AssistantConnectionStatus.Disconnected,
             audio = AssistantAudioStatus.Idle,
@@ -64,13 +70,46 @@ class LocalAssistantController @Inject constructor(
 
     override suspend fun connect() {
         val connecting = stateMachine.connecting(mutableState.value, nowMillis())
-        mutableState.value = connecting
+        mutableState.value = connecting.copy(statusText = "正在连接 Fake Xiaozhi WebSocket")
         if (!connecting.assistantEnabled || connecting.errorMessage != null) return
-        delay(120)
-        mutableState.value = stateMachine.connected(connecting, sessionId = fakeSessionId(), nowMillis = nowMillis())
+
+        val identity = deviceIdentityManager.ensureIdentity()
+        val config = XiaozhiConnectionConfig(
+            websocketUrl = settingsRepository.websocketUrl.first(),
+            websocketToken = settingsRepository.assistantWebsocketToken.first().ifBlank { "phase3-fake-token" },
+            deviceId = identity.deviceId,
+            clientId = identity.clientId,
+        )
+        val result = fakeWebSocketClient.connect(config)
+        if (result.success && !result.sessionId.isNullOrBlank()) {
+            mutableState.value = stateMachine.connected(
+                current = connecting,
+                sessionId = result.sessionId,
+                nowMillis = nowMillis(),
+            ).copy(
+                deviceId = identity.deviceId,
+                clientId = identity.clientId,
+                websocketUrl = result.websocketUrl,
+                lastClientJson = result.outgoingHelloJson,
+                lastServerJson = result.incomingHelloJson,
+                lastProtocolEvent = result.event.javaClass.simpleName,
+                statusText = "Fake WebSocket 已完成 hello/session 握手",
+            )
+        } else {
+            mutableState.value = stateMachine.error(
+                current = mutableState.value,
+                message = "Fake WebSocket hello 失败",
+                nowMillis = nowMillis(),
+            ).copy(
+                lastClientJson = result.outgoingHelloJson,
+                lastServerJson = result.incomingHelloJson,
+                lastProtocolEvent = result.event.javaClass.simpleName,
+            )
+        }
     }
 
     override suspend fun disconnect(reason: String) {
+        fakeWebSocketClient.close(reason)
         val current = mutableState.value
         mutableState.value = current.copy(
             phase = if (current.assistantEnabled) AssistantPhase.Idle else AssistantPhase.Disabled,
@@ -93,11 +132,30 @@ class LocalAssistantController @Inject constructor(
         val thinking = stateMachine.textSubmitted(mutableState.value, trimmed, nowMillis())
         mutableState.value = thinking
         if (thinking.errorMessage != null) return
-        delay(180)
+
+        val turn = fakeWebSocketClient.sendText(trimmed)
+        if (!turn.success) {
+            mutableState.value = stateMachine.error(
+                current = thinking,
+                message = turn.message,
+                nowMillis = nowMillis(),
+            )
+            return
+        }
+        delay(80)
+        val assistantText = when (val event = turn.event) {
+            is ProtocolEvent.AssistantText -> event.text
+            else -> turn.message
+        }
         mutableState.value = stateMachine.assistantText(
             current = thinking,
-            text = "Fake Runtime：已收到『$trimmed』。Phase3 当前不会执行便签工具。",
+            text = assistantText,
             nowMillis = nowMillis(),
+        ).copy(
+            lastClientJson = turn.outgoingJson,
+            lastServerJson = turn.incomingJson,
+            lastProtocolEvent = turn.event.javaClass.simpleName,
+            statusText = "Fake WebSocket 文本回合完成",
         )
     }
 
@@ -130,6 +188,7 @@ class LocalAssistantController @Inject constructor(
         mutableState.value = mutableState.value.copy(
             lastAssistantText = result.message,
             statusText = "已阻断或处理工具调用：${result.toolName}",
+            lastProtocolEvent = "ToolCallBlocked",
             lastEventAt = nowMillis(),
         )
     }
@@ -145,6 +204,7 @@ class LocalAssistantController @Inject constructor(
     }
 
     override suspend fun resetDeviceIdentity() {
+        fakeWebSocketClient.close("identity_reset")
         val identity = deviceIdentityManager.resetIdentity()
         mutableState.value = mutableState.value.copy(
             phase = if (mutableState.value.assistantEnabled) AssistantPhase.Idle else AssistantPhase.Disabled,
@@ -156,6 +216,9 @@ class LocalAssistantController @Inject constructor(
             clientId = identity.clientId,
             activationCode = null,
             websocketUrl = null,
+            lastClientJson = null,
+            lastServerJson = null,
+            lastProtocolEvent = null,
             statusText = "设备身份已重置：${identity.displayDeviceId}，需要重新激活。",
             errorMessage = null,
             lastEventAt = nowMillis(),
@@ -228,6 +291,4 @@ class LocalAssistantController @Inject constructor(
     }
 
     private fun nowMillis(): Long = System.currentTimeMillis()
-
-    private fun fakeSessionId(): String = "phase3-fake-${nowMillis()}"
 }

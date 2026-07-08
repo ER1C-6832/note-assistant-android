@@ -9,15 +9,22 @@ class XiaozhiMessageRouterTest {
     private val router = XiaozhiMessageRouter(McpProtocolClient())
 
     @Test
-    fun assistantTextMessageRoutesToAssistantTextEvent() {
-        val event = router.routeText("{\"type\":\"text\",\"session_id\":\"s1\",\"text\":\"你好\"}")
+    fun helloRoutesToConnected() {
+        val event = router.routeText("{\"type\":\"hello\",\"session_id\":\"abc\",\"transport\":\"websocket\"}")
+        assertTrue(event is ProtocolEvent.Connected)
+        assertEquals("abc", (event as ProtocolEvent.Connected).sessionId)
+    }
+
+    @Test
+    fun textRoutesToAssistantText() {
+        val event = router.routeText("{\"type\":\"text\",\"session_id\":\"abc\",\"text\":\"你好\"}")
         assertTrue(event is ProtocolEvent.AssistantText)
         assertEquals("你好", (event as ProtocolEvent.AssistantText).text)
     }
 
     @Test
-    fun noteToolCallRoutesButIsStillOnlyProtocolEvent() {
-        val event = router.routeText("{\"type\":\"mcp\",\"session_id\":\"s1\",\"name\":\"notes.delete\",\"arguments\":{\"note_id\":1}}")
+    fun noteToolCallIsParsedAsToolCallOnly() {
+        val event = router.routeText("{\"type\":\"mcp\",\"session_id\":\"abc\",\"name\":\"notes.delete\",\"arguments\":{\"note_id\":1}}")
         assertTrue(event is ProtocolEvent.ToolCall)
         assertEquals("notes.delete", (event as ProtocolEvent.ToolCall).toolName)
     }

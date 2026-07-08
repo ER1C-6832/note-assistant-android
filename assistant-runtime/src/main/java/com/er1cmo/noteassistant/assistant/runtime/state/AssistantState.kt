@@ -54,6 +54,9 @@ data class AssistantState(
     val clientId: String? = null,
     val activationCode: String? = null,
     val websocketUrl: String? = null,
+    val lastClientJson: String? = null,
+    val lastServerJson: String? = null,
+    val lastProtocolEvent: String? = null,
 ) {
     val isConnected: Boolean
         get() = connection == AssistantConnectionStatus.Connected && sessionId != null

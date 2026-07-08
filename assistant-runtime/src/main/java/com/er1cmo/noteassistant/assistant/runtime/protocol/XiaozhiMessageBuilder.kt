@@ -1,6 +1,8 @@
 package com.er1cmo.noteassistant.assistant.runtime.protocol
 
-class XiaozhiMessageBuilder {
+import javax.inject.Inject
+
+class XiaozhiMessageBuilder @Inject constructor() {
     fun hello(): String = """
         {"type":"hello","version":1,"features":{"mcp":true},"transport":"websocket","audio_params":{"format":"opus","sample_rate":16000,"channels":1,"frame_duration":20}}
     """.trimIndent()
