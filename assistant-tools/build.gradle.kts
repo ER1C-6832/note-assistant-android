@@ -31,6 +31,7 @@ dependencies {
     implementation(libs.hilt.android)
     kapt(libs.hilt.compiler)
     implementation(project(":assistant-mcp-base"))
+    implementation(project(":assistant-bridge"))
     implementation(project(":notes-domain"))
     implementation(libs.kotlinx.coroutines.android)
 
