@@ -5,12 +5,12 @@ import com.er1cmo.noteassistant.assistant.mcpbase.McpToolDescriptor
 import com.er1cmo.noteassistant.notes.domain.command.NoteCommandService
 import javax.inject.Inject
 
-class NotesSearchTool @Inject constructor(
+class NotesCreateTool @Inject constructor(
     commandService: NoteCommandService,
 ) : AbstractNoteCommandTool(commandService) {
-    override val name: String = "notes.search"
-    override val description: String = "搜索本地便签，默认排除归档和最近删除。"
-    override val riskLevel: McpRiskLevel = McpRiskLevel.Low
+    override val name: String = "notes.create"
+    override val description: String = "创建普通便签或待办便签。"
+    override val riskLevel: McpRiskLevel = McpRiskLevel.Medium
     override val descriptor: McpToolDescriptor = McpToolDescriptor(
         name = name,
         description = description,
@@ -18,20 +18,21 @@ class NotesSearchTool @Inject constructor(
             {
               "type": "object",
               "properties": {
-                "query": { "type": "string" },
-                "tags": { "type": "array", "items": { "type": "string" } },
+                "title": { "type": "string" },
+                "content": { "type": "string" },
                 "type": { "type": "string", "enum": ["normal", "todo"] },
-                "include_done": { "type": "boolean" },
-                "include_archived": { "type": "boolean" },
-                "include_deleted": { "type": "boolean" },
-                "limit": { "type": "integer", "minimum": 1, "maximum": 50 }
+                "tags": { "type": "array", "items": { "type": "string" } },
+                "tag_text": { "type": "string" },
+                "color": { "type": "string" },
+                "pinned": { "type": "boolean" },
+                "open_after_create": { "type": "boolean" }
               },
               "additionalProperties": true
             }
         """.trimIndent(),
-        riskLevel = McpRiskLevel.Low,
-        mutates = false,
+        riskLevel = McpRiskLevel.Medium,
+        mutates = true,
         confirmation = McpToolDescriptor.CONFIRMATION_NOT_REQUIRED,
-        examples = listOf("搜索客户相关的便签", "搜索待办里包含样品的便签"),
+        examples = listOf("帮我记一下明天上午十点联系客户", "帮我创建一个待办，周五寄出样品"),
     )
 }

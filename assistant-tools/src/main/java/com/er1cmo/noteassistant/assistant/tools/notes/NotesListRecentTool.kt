@@ -5,11 +5,11 @@ import com.er1cmo.noteassistant.assistant.mcpbase.McpToolDescriptor
 import com.er1cmo.noteassistant.notes.domain.command.NoteCommandService
 import javax.inject.Inject
 
-class NotesSearchTool @Inject constructor(
+class NotesListRecentTool @Inject constructor(
     commandService: NoteCommandService,
 ) : AbstractNoteCommandTool(commandService) {
-    override val name: String = "notes.search"
-    override val description: String = "搜索本地便签，默认排除归档和最近删除。"
+    override val name: String = "notes.list_recent"
+    override val description: String = "列出最近更新的便签，用于解析“刚才那条”“最近那条”。"
     override val riskLevel: McpRiskLevel = McpRiskLevel.Low
     override val descriptor: McpToolDescriptor = McpToolDescriptor(
         name = name,
@@ -18,20 +18,16 @@ class NotesSearchTool @Inject constructor(
             {
               "type": "object",
               "properties": {
-                "query": { "type": "string" },
-                "tags": { "type": "array", "items": { "type": "string" } },
-                "type": { "type": "string", "enum": ["normal", "todo"] },
-                "include_done": { "type": "boolean" },
+                "limit": { "type": "integer", "minimum": 1, "maximum": 50 },
                 "include_archived": { "type": "boolean" },
-                "include_deleted": { "type": "boolean" },
-                "limit": { "type": "integer", "minimum": 1, "maximum": 50 }
+                "include_deleted": { "type": "boolean" }
               },
-              "additionalProperties": true
+              "additionalProperties": false
             }
         """.trimIndent(),
         riskLevel = McpRiskLevel.Low,
         mutates = false,
         confirmation = McpToolDescriptor.CONFIRMATION_NOT_REQUIRED,
-        examples = listOf("搜索客户相关的便签", "搜索待办里包含样品的便签"),
+        examples = listOf("最近记了什么", "打开刚才那条前先列出最近便签"),
     )
 }

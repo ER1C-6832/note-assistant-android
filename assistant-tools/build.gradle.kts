@@ -31,5 +31,9 @@ dependencies {
     implementation(libs.hilt.android)
     kapt(libs.hilt.compiler)
     implementation(project(":assistant-mcp-base"))
+    implementation(project(":notes-domain"))
     implementation(libs.kotlinx.coroutines.android)
+
+    testImplementation(libs.junit)
+    testImplementation("org.json:json:20240303")
 }
