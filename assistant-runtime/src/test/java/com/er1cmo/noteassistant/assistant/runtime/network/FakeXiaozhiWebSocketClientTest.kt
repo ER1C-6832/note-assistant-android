@@ -1,5 +1,6 @@
 package com.er1cmo.noteassistant.assistant.runtime.network
 
+import com.er1cmo.noteassistant.assistant.mcpbase.McpToolResult
 import com.er1cmo.noteassistant.assistant.mcpbase.McpToolStatus
 import com.er1cmo.noteassistant.assistant.runtime.mcp.McpProtocolClient
 import com.er1cmo.noteassistant.assistant.runtime.protocol.ProtocolEvent
@@ -79,7 +80,7 @@ class FakeXiaozhiWebSocketClientTest {
     }
 
     @Test
-    fun notesToolCallIsBlockedThroughFakeWebSocketMcpPath() = runBlocking {
+    fun notesToolCallFailsClosedThroughFakeWebSocketMcpPath() = runBlocking {
         val client = newClient()
         client.connect(config)
 
@@ -90,7 +91,7 @@ class FakeXiaozhiWebSocketClientTest {
         val response = turn.event as ProtocolEvent.McpResponse
         assertTrue(response.blocked)
         assertEquals(McpToolStatus.Blocked, response.status)
-        assertTrue(turn.outgoingResponseJson?.contains("requires_confirmation") == true)
+        assertTrue(turn.outgoingResponseJson?.contains(McpToolResult.ERROR_EXECUTOR_UNAVAILABLE) == true)
     }
 
     @Test

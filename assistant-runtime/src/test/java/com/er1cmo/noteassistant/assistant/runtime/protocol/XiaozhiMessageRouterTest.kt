@@ -1,5 +1,6 @@
 package com.er1cmo.noteassistant.assistant.runtime.protocol
 
+import com.er1cmo.noteassistant.assistant.mcpbase.McpToolResult
 import com.er1cmo.noteassistant.assistant.mcpbase.McpToolStatus
 import com.er1cmo.noteassistant.assistant.runtime.mcp.McpProtocolClient
 import org.junit.Assert.assertEquals
@@ -43,7 +44,7 @@ class XiaozhiMessageRouterTest {
     }
 
     @Test
-    fun toolsListRoutesToSafeMcpResponse() {
+    fun toolsListRoutesToExecutorBackedMcpResponse() {
         val event = router.routeText(
             "{\"type\":\"mcp\",\"session_id\":\"abc\",\"payload\":{\"jsonrpc\":\"2.0\",\"id\":\"tools\",\"method\":\"tools/list\",\"params\":{}}}",
         )
@@ -52,11 +53,12 @@ class XiaozhiMessageRouterTest {
         val response = event as ProtocolEvent.McpResponse
         assertFalse(response.blocked)
         assertEquals(McpToolStatus.Success, response.status)
-        assertTrue(response.responseJson.contains("phase3.status"))
+        assertTrue(response.responseJson.contains("\"tools\":[]"))
+        assertFalse(response.responseJson.contains("phase3.status"))
     }
 
     @Test
-    fun noteToolCallIsBlockedAtProtocolBoundary() {
+    fun noteToolCallFailsClosedAtProtocolBoundary() {
         val event = router.routeText(
             "{\"type\":\"mcp\",\"session_id\":\"abc\",\"payload\":{\"jsonrpc\":\"2.0\",\"id\":\"call\",\"method\":\"tools/call\",\"params\":{\"name\":\"notes.delete\",\"arguments\":{\"note_id\":1}}}}",
         )
@@ -66,8 +68,7 @@ class XiaozhiMessageRouterTest {
         assertTrue(response.blocked)
         assertEquals(McpToolStatus.Blocked, response.status)
         assertEquals("notes.delete", response.toolName)
-        assertTrue(response.responseJson.contains("requires_confirmation"))
-        assertTrue(response.responseJson.contains("false"))
+        assertTrue(response.responseJson.contains(McpToolResult.ERROR_EXECUTOR_UNAVAILABLE))
     }
 
     @Test

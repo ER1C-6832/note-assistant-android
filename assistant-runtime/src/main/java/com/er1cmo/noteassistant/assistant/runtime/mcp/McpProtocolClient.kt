@@ -1,107 +1,81 @@
 package com.er1cmo.noteassistant.assistant.runtime.mcp
 
+import com.er1cmo.noteassistant.assistant.mcpbase.FailClosedMcpToolExecutor
+import com.er1cmo.noteassistant.assistant.mcpbase.McpJsonRpcMapper
 import com.er1cmo.noteassistant.assistant.mcpbase.McpResultMapper
-import com.er1cmo.noteassistant.assistant.mcpbase.McpRiskLevel
+import com.er1cmo.noteassistant.assistant.mcpbase.McpTool
+import com.er1cmo.noteassistant.assistant.mcpbase.McpToolContext
 import com.er1cmo.noteassistant.assistant.mcpbase.McpToolDescriptor
+import com.er1cmo.noteassistant.assistant.mcpbase.McpToolExecutor
 import com.er1cmo.noteassistant.assistant.mcpbase.McpToolResult
 import com.er1cmo.noteassistant.assistant.mcpbase.McpToolStatus
-import com.er1cmo.noteassistant.assistant.mcpbase.requestIdJson
+import com.er1cmo.noteassistant.assistant.mcpbase.putIdJson
 import javax.inject.Inject
 import javax.inject.Singleton
-import org.json.JSONArray
+import kotlin.jvm.JvmSuppressWildcards
+import kotlinx.coroutines.runBlocking
 import org.json.JSONObject
 
 @Singleton
-class McpProtocolClient @Inject constructor() {
-    fun toolsList(): List<McpToolDescriptor> = listOf(
-        McpToolDescriptor(
-            name = "phase3.echo",
-            description = "Phase3 fake runtime echo tool. It does not read or mutate notes.",
-            inputSchemaJson = "{\"type\":\"object\",\"additionalProperties\":true}",
-            riskLevel = McpRiskLevel.Low,
-            mutates = false,
-        ),
-        McpToolDescriptor(
-            name = "phase3.status",
-            description = "Returns assistant runtime status metadata only.",
-            inputSchemaJson = "{\"type\":\"object\",\"additionalProperties\":true}",
-            riskLevel = McpRiskLevel.Low,
-            mutates = false,
-        ),
-    )
+class McpProtocolClient @Inject constructor(
+    private val executors: Set<@JvmSuppressWildcards McpToolExecutor>,
+) {
+    constructor() : this(emptySet())
+
+    private val failClosedExecutor = FailClosedMcpToolExecutor()
+
+    fun toolsList(): List<McpToolDescriptor> = activeExecutor().listDescriptors()
 
     fun handleJsonRpc(payloadJson: String): McpProtocolResponse {
-        val payload = runCatching { JSONObject(payloadJson) }.getOrNull()
-            ?: return McpProtocolResponse.error(
+        val request = McpJsonRpcMapper.parseRequest(payloadJson).getOrElse { error ->
+            return McpProtocolResponse.error(
                 requestIdJson = null,
                 method = null,
-                message = "Invalid MCP JSON-RPC payload",
+                message = error.message ?: "Invalid MCP JSON-RPC payload",
+                errorCode = McpToolResult.ERROR_INVALID_JSON,
+                errorCodeNumber = McpResultMapper.ERROR_PARSE,
             )
-        val requestIdJson = payload.requestIdJson()
-        val method = payload.optString("method").trim()
-        return when (method) {
+        }
+
+        return when (request.method) {
             "initialize" -> McpProtocolResponse.success(
-                requestIdJson = requestIdJson,
-                method = method,
-                message = "Phase3 MCP initialize acknowledged; note mutation tools remain blocked.",
-                responseJson = buildInitializeResponseJson(requestIdJson),
+                requestIdJson = request.requestIdJson,
+                method = request.method,
+                message = "Phase4 MCP initialize acknowledged; tools are delegated through injected executor.",
+                responseJson = buildInitializeResponseJson(request.requestIdJson),
             )
             "notifications/initialized" -> McpProtocolResponse.success(
-                requestIdJson = requestIdJson,
-                method = method,
-                message = "Phase3 MCP initialized notification acknowledged.",
-                responseJson = buildInitializedNotificationAckJson(requestIdJson),
+                requestIdJson = request.requestIdJson,
+                method = request.method,
+                message = "Phase4 MCP initialized notification acknowledged.",
+                responseJson = buildInitializedNotificationAckJson(request.requestIdJson),
             )
             "tools/list" -> McpProtocolResponse.success(
-                requestIdJson = requestIdJson,
-                method = method,
-                message = "Phase3 tools/list returned safe runtime-only tools.",
-                responseJson = McpResultMapper.toolsListResponse(requestIdJson, toolsList()),
+                requestIdJson = request.requestIdJson,
+                method = request.method,
+                message = "MCP tools/list returned injected executor descriptors.",
+                responseJson = McpResultMapper.toolsListResponse(
+                    requestIdJson = request.requestIdJson,
+                    descriptors = toolsList(),
+                ),
             )
-            "tools/call" -> handleToolsCall(payload = payload, requestIdJson = requestIdJson, method = method)
+            "tools/call" -> handleToolsCall(request.payload, request.requestIdJson, request.method)
             else -> McpProtocolResponse.error(
-                requestIdJson = requestIdJson,
-                method = method.ifBlank { null },
-                message = "Phase3 unsupported MCP method: ${method.ifBlank { "<missing>" }}",
+                requestIdJson = request.requestIdJson,
+                method = request.method,
+                message = "Unsupported MCP method: ${request.method}",
+                errorCode = McpToolResult.ERROR_UNSUPPORTED_TOOL,
+                errorCodeNumber = McpResultMapper.ERROR_METHOD_NOT_FOUND,
             )
         }
     }
 
-    fun handleToolCall(toolName: String, argumentsJson: String): McpToolResult {
-        val normalized = toolName.trim().lowercase()
-        return when {
-            isNoteMutationTool(normalized) -> McpToolResult.blocked(
-                toolName = toolName,
-                message = "Phase3 已收到工具调用，但便签工具执行被阻断；真实执行从 Phase4 开始并必须走 NoteCommandService。",
-                argumentsJson = argumentsJson,
-                resultJson = JSONObject()
-                    .put("blocked", true)
-                    .put("phase", "phase3")
-                    .put("note_mutation_enabled", false)
-                    .toString(),
-            )
-            normalized == "phase3.echo" -> McpToolResult.success(
-                toolName = toolName,
-                message = "Phase3 echo ok",
-                resultJson = JSONObject()
-                    .put("echo", argumentsJson.toJsonObjectOrString())
-                    .toString(),
-            )
-            normalized == "phase3.status" -> McpToolResult.success(
-                toolName = toolName,
-                message = "Phase3 runtime status tool is available",
-                resultJson = JSONObject()
-                    .put("phase3", true)
-                    .put("note_mutation_enabled", false)
-                    .put("boundary", "mcp_protocol_block")
-                    .toString(),
-            )
-            else -> McpToolResult.notImplemented(
-                toolName = toolName,
-                message = "Phase3 暂不支持该工具：$toolName",
-                argumentsJson = argumentsJson,
-            )
-        }
+    fun handleToolCall(toolName: String, argumentsJson: String): McpToolResult = runBlocking {
+        activeExecutor().execute(
+            name = toolName,
+            argumentsJson = argumentsJson,
+            context = McpToolContext(),
+        ).withToolNameIfMissing(toolName)
     }
 
     private fun handleToolsCall(
@@ -109,34 +83,44 @@ class McpProtocolClient @Inject constructor() {
         requestIdJson: String?,
         method: String,
     ): McpProtocolResponse {
-        val params = payload.optJSONObject("params") ?: JSONObject()
-        val toolName = params.optString("name").ifBlank {
-            params.optString("tool").ifBlank { params.optString("tool_name") }
-        }
-        val argumentsAny = params.opt("arguments") ?: params.opt("args") ?: JSONObject()
-        val argumentsJson = when (argumentsAny) {
-            is JSONObject -> argumentsAny.toString()
-            is JSONArray -> argumentsAny.toString()
-            is String -> argumentsAny.ifBlank { "{}" }
-            else -> JSONObject().put("value", argumentsAny.toString()).toString()
-        }
-        if (toolName.isBlank()) {
-            return McpProtocolResponse.error(
+        val call = McpJsonRpcMapper.parseToolCall(payload).getOrElse { error ->
+            val result = McpToolResult.failed(
+                message = error.message ?: "tools/call 参数无效",
+                errorCode = McpToolResult.ERROR_VALIDATION,
+            )
+            return McpProtocolResponse(
                 requestIdJson = requestIdJson,
                 method = method,
-                message = "tools/call 缺少 name/tool_name",
+                toolName = null,
+                status = result.statusEnum,
+                blocked = true,
+                message = result.message,
+                responseJson = McpResultMapper.toolsCallResponse(requestIdJson, result),
             )
         }
-        val result = handleToolCall(toolName = toolName, argumentsJson = argumentsJson)
+
+        val result = runBlocking {
+            activeExecutor().execute(
+                name = call.toolName,
+                argumentsJson = call.argumentsJson,
+                context = McpToolContext(requestIdJson = call.requestIdJson),
+            ).withToolNameIfMissing(call.toolName)
+        }
         return McpProtocolResponse(
-            requestIdJson = requestIdJson,
+            requestIdJson = call.requestIdJson,
             method = method,
             toolName = result.toolName,
             status = result.statusEnum,
             blocked = result.statusEnum != McpToolStatus.Success,
             message = result.message,
-            responseJson = McpResultMapper.toolsCallResponse(requestIdJson, result),
+            responseJson = McpResultMapper.toolsCallResponse(call.requestIdJson, result),
         )
+    }
+
+    private fun activeExecutor(): McpToolExecutor {
+        if (executors.isEmpty()) return failClosedExecutor
+        if (executors.size == 1) return executors.first()
+        return CompositeMcpToolExecutor(executors.toList())
     }
 
     private fun buildInitializeResponseJson(requestIdJson: String?): String {
@@ -155,8 +139,8 @@ class McpProtocolClient @Inject constructor() {
                     .put(
                         "serverInfo",
                         JSONObject()
-                            .put("name", "note-assistant-android-phase3")
-                            .put("version", "0.1.0-phase3"),
+                            .put("name", "note-assistant-android-phase4")
+                            .put("version", "0.1.0-phase4"),
                     ),
             )
             .toString()
@@ -169,11 +153,37 @@ class McpProtocolClient @Inject constructor() {
             .put("result", JSONObject().put("acknowledged", true))
             .toString()
     }
+}
 
-    private fun isNoteMutationTool(normalizedToolName: String): Boolean {
-        if (normalizedToolName.startsWith("notes.")) return true
-        if (normalizedToolName.startsWith("tags.")) return true
-        return false
+private fun McpToolResult.withToolNameIfMissing(toolName: String): McpToolResult {
+    return if (this.toolName.isNullOrBlank()) copy(toolName = toolName) else this
+}
+
+private class CompositeMcpToolExecutor(
+    private val delegates: List<McpToolExecutor>,
+) : McpToolExecutor {
+    override fun listDescriptors(): List<McpToolDescriptor> = delegates
+        .flatMap { it.listDescriptors() }
+        .distinctBy { it.name }
+        .sortedBy { it.name }
+
+    override fun findTool(name: String): McpTool? = delegates
+        .asSequence()
+        .mapNotNull { it.findTool(name) }
+        .firstOrNull()
+
+    override suspend fun execute(
+        name: String,
+        argumentsJson: String,
+        context: McpToolContext,
+    ): McpToolResult {
+        val executor = delegates.firstOrNull { it.findTool(name) != null }
+            ?: return McpToolResult.notImplemented(
+                toolName = name,
+                message = "暂不支持该工具：$name",
+                argumentsJson = argumentsJson,
+            )
+        return executor.execute(name, argumentsJson, context)
     }
 }
 
@@ -206,6 +216,8 @@ data class McpProtocolResponse(
             requestIdJson: String?,
             method: String?,
             message: String,
+            errorCode: String = McpToolResult.ERROR_UNSUPPORTED_TOOL,
+            errorCodeNumber: Int = McpResultMapper.ERROR_METHOD_NOT_FOUND,
         ): McpProtocolResponse = McpProtocolResponse(
             requestIdJson = requestIdJson,
             method = method,
@@ -216,30 +228,9 @@ data class McpProtocolResponse(
             responseJson = McpResultMapper.errorResponse(
                 requestIdJson = requestIdJson,
                 message = message,
-                data = JSONObject().put("phase", "phase3"),
+                code = errorCodeNumber,
+                data = JSONObject().put("error_code", errorCode),
             ),
         )
     }
-}
-
-private fun JSONObject.putIdJson(idJson: String?): JSONObject {
-    if (idJson == null) {
-        put("id", JSONObject.NULL)
-        return this
-    }
-    val id = runCatching { JSONObject("{\"id\":$idJson}").opt("id") }.getOrNull()
-    put("id", id ?: JSONObject.NULL)
-    return this
-}
-
-private fun String.toJsonObjectOrString(): Any {
-    val trimmed = trim()
-    if (trimmed.isBlank()) return ""
-    return runCatching {
-        when {
-            trimmed.startsWith("{") -> JSONObject(trimmed)
-            trimmed.startsWith("[") -> JSONArray(trimmed)
-            else -> trimmed
-        }
-    }.getOrDefault(trimmed)
 }
