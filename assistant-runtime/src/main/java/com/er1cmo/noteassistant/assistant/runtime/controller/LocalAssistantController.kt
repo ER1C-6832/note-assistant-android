@@ -3,7 +3,7 @@ package com.er1cmo.noteassistant.assistant.runtime.controller
 import com.er1cmo.noteassistant.app.settings.SettingsRepository
 import com.er1cmo.noteassistant.assistant.runtime.activation.OtaActivationClient
 import com.er1cmo.noteassistant.assistant.runtime.activation.OtaActivationState
-import com.er1cmo.noteassistant.assistant.runtime.audio.FakeAudioEngine
+import com.er1cmo.noteassistant.assistant.runtime.audio.RealAudioEngine
 import com.er1cmo.noteassistant.assistant.runtime.conversation.ConversationStateMachine
 import com.er1cmo.noteassistant.assistant.runtime.identity.DeviceIdentityManager
 import com.er1cmo.noteassistant.assistant.runtime.mcp.McpProtocolClient
@@ -35,7 +35,7 @@ class LocalAssistantController @Inject constructor(
     private val deviceIdentityManager: DeviceIdentityManager,
     private val otaActivationClient: OtaActivationClient,
     private val fakeWebSocketClient: FakeXiaozhiWebSocketClient,
-    private val fakeAudioEngine: FakeAudioEngine,
+    private val realAudioEngine: RealAudioEngine,
 ) : AssistantController {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val mutableState = MutableStateFlow(AssistantState.disabled(nowMillis()))
@@ -62,7 +62,7 @@ class LocalAssistantController @Inject constructor(
 
     override suspend fun disableAssistant() {
         settingsRepository.setAssistantEnabled(false)
-        fakeAudioEngine.cancel()
+        realAudioEngine.cancel()
         fakeWebSocketClient.close("assistant_disabled")
         mutableState.value = stateMachine.disable(mutableState.value, nowMillis()).copy(
             connection = AssistantConnectionStatus.Disconnected,
@@ -117,7 +117,7 @@ class LocalAssistantController @Inject constructor(
     }
 
     override suspend fun disconnect(reason: String) {
-        fakeAudioEngine.cancel()
+        realAudioEngine.cancel()
         fakeWebSocketClient.close(reason)
         val current = mutableState.value
         mutableState.value = current.copy(
@@ -175,14 +175,14 @@ class LocalAssistantController @Inject constructor(
 
     override suspend fun startPushToTalk(hasRecordAudioPermission: Boolean) {
         if (!hasRecordAudioPermission) {
-            fakeAudioEngine.cancel()
+            realAudioEngine.cancel()
             mutableState.value = stateMachine.error(
                 current = mutableState.value.copy(audio = AssistantAudioStatus.Error),
                 message = "缺少 RECORD_AUDIO 权限，未开始录音",
                 nowMillis = nowMillis(),
             ).copy(
-                statusText = "麦克风权限被拒绝，Fake Audio 未启动",
-                lastAudioSummary = "未获得 RECORD_AUDIO，未创建 recorder / encoder",
+                statusText = "麦克风权限被拒绝，真实 AudioRecord 未启动",
+                lastAudioSummary = "未获得 RECORD_AUDIO，未创建 AudioRecord / MediaCodec OpusEncoder",
             )
             return
         }
@@ -198,17 +198,27 @@ class LocalAssistantController @Inject constructor(
             )
             return
         }
-        val audioStart = fakeAudioEngine.startRecording(nowMillis())
+        val audioStart = realAudioEngine.startRecording(nowMillis()) { opusFrame ->
+            fakeWebSocketClient.sendAudioFrame(opusFrame).success
+        }
+        if (!audioStart.started && !realAudioEngine.isRecording()) {
+            mutableState.value = stateMachine.error(
+                current = mutableState.value,
+                message = audioStart.summary,
+                nowMillis = nowMillis(),
+            )
+            return
+        }
         mutableState.value = stateMachine.startListening(mutableState.value, nowMillis()).copy(
             phase = AssistantPhase.Listening,
             audio = AssistantAudioStatus.Recording,
-            statusText = "Fake recorder / encoder 已启动，松开后必须在 300ms 内停止",
+            statusText = "真实 AudioRecord / MediaCodec Opus 已启动，松开后必须在 300ms 内停止",
             errorMessage = null,
             lastClientJson = listenStart.outgoingJson,
             lastServerJson = listenStart.incomingJson,
             lastProtocolEvent = listenStart.event.javaClass.simpleName,
-            audioCapturedFrames = audioStart.pcmFrames,
-            audioEncodedFrames = audioStart.opusFrames,
+            audioCapturedFrames = 0,
+            audioEncodedFrames = 0,
             audioUploadedFrames = 0,
             pushToTalkStopLatencyMs = null,
             lastAudioSummary = audioStart.summary,
@@ -217,21 +227,23 @@ class LocalAssistantController @Inject constructor(
     }
 
     override suspend fun stopPushToTalk() {
-        val stoppedAudio = fakeAudioEngine.stopAndAwait(maxStopLatencyMs = 300L)
-        val uploaded = stoppedAudio.encodedFrames.count { frame ->
-            fakeWebSocketClient.sendAudioFrame(frame).success
-        }
+        val stoppedAudio = realAudioEngine.stopRecordingAndAwait(maxStopLatencyMs = 300L)
+        val uploaded = fakeWebSocketClient.uploadedAudioFrameCount()
         val listenStop = fakeWebSocketClient.sendStopListening()
         val stopped = stateMachine.stopListening(mutableState.value, nowMillis())
+        val baseSummary = buildString {
+            append(stoppedAudio.summary)
+            append("；AudioRecord processing=${stoppedAudio.processingSummary}")
+        }
         mutableState.value = stopped.copy(
             phase = AssistantPhase.Thinking,
             audio = AssistantAudioStatus.Idle,
             statusText = if (stoppedAudio.stoppedWithinBudget) {
-                "Fake Audio 已在 ${stoppedAudio.stopLatencyMs}ms 内停止，等待助手回复"
+                "真实音频已在 ${stoppedAudio.stopLatencyMs}ms 内停止，等待助手回复"
             } else {
-                "Fake Audio 停止超时：${stoppedAudio.stopLatencyMs}ms"
+                "真实音频停止超时：${stoppedAudio.stopLatencyMs}ms"
             },
-            errorMessage = if (stoppedAudio.stoppedWithinBudget) null else "PTT release 后停止超过 300ms",
+            errorMessage = stoppedAudio.errorMessage ?: if (stoppedAudio.stoppedWithinBudget) null else "PTT release 后停止超过 300ms",
             lastClientJson = listenStop.outgoingJson,
             lastServerJson = listenStop.incomingJson,
             lastProtocolEvent = listenStop.event.javaClass.simpleName,
@@ -239,31 +251,40 @@ class LocalAssistantController @Inject constructor(
             audioEncodedFrames = stoppedAudio.opusFrames,
             audioUploadedFrames = uploaded,
             pushToTalkStopLatencyMs = stoppedAudio.stopLatencyMs,
-            lastAudioSummary = stoppedAudio.summary,
+            lastAudioSummary = baseSummary,
             lastEventAt = nowMillis(),
         )
-        if (!stoppedAudio.stoppedWithinBudget) return
+        if (!stoppedAudio.stoppedWithinBudget || stoppedAudio.errorMessage != null) return
+
         delay(80)
         val speaking = stateMachine.speaking(mutableState.value, nowMillis())
         mutableState.value = speaking.copy(
-            lastAssistantText = "Fake Runtime：收到 $uploaded 帧 Fake Opus，开始模拟语音回复。",
+            lastAssistantText = "真实音频上行完成：已上传 $uploaded 帧 Opus，开始用 loopback 模拟服务端二进制音频下行。",
             audioCapturedFrames = stoppedAudio.pcmFrames,
             audioEncodedFrames = stoppedAudio.opusFrames,
             audioUploadedFrames = uploaded,
             pushToTalkStopLatencyMs = stoppedAudio.stopLatencyMs,
-            lastAudioSummary = stoppedAudio.summary,
+            lastAudioSummary = baseSummary,
         )
+
+        val playback = realAudioEngine.playOpusFrames(stoppedAudio.encodedFrames)
         delay(80)
         mutableState.value = stateMachine.assistantText(
             current = mutableState.value,
-            text = "Fake Runtime：语音回复完成。PTT release->stop=${stoppedAudio.stopLatencyMs}ms。",
+            text = if (playback.success) {
+                "Real Audio：Opus 上行和 AudioTrack 下行播放验证完成。PTT release->stop=${stoppedAudio.stopLatencyMs}ms。"
+            } else {
+                "Real Audio：上行完成，但下行播放未成功：${playback.summary}"
+            },
             nowMillis = nowMillis(),
         ).copy(
             audioCapturedFrames = stoppedAudio.pcmFrames,
             audioEncodedFrames = stoppedAudio.opusFrames,
             audioUploadedFrames = uploaded,
             pushToTalkStopLatencyMs = stoppedAudio.stopLatencyMs,
-            lastAudioSummary = stoppedAudio.summary,
+            lastAudioSummary = "$baseSummary；${playback.summary}",
+            lastServerJson = "{\"type\":\"binary_audio_loopback\",\"opus_frames\":${playback.opusFrames},\"pcm_frames\":${playback.pcmFrames},\"pcm_bytes\":${playback.pcmBytes}}",
+            lastProtocolEvent = "BinaryAudioLoopback",
         )
     }
 
@@ -291,7 +312,7 @@ class LocalAssistantController @Inject constructor(
     }
 
     override suspend fun resetDeviceIdentity() {
-        fakeAudioEngine.cancel()
+        realAudioEngine.cancel()
         fakeWebSocketClient.close("identity_reset")
         val identity = deviceIdentityManager.resetIdentity()
         mutableState.value = mutableState.value.copy(
