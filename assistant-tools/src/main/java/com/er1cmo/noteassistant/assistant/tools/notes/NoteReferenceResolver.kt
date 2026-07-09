@@ -130,7 +130,7 @@ class NoteReferenceResolver @Inject constructor(
     }
 }
 
-internal enum class NoteResolveScope {
+enum class NoteResolveScope {
     Active,
     Archived,
     Deleted,
@@ -138,7 +138,7 @@ internal enum class NoteResolveScope {
     All,
 }
 
-internal data class NoteResolveRequest(
+data class NoteResolveRequest(
     val query: String,
     val exactTitle: String = "",
     val scope: NoteResolveScope = NoteResolveScope.All,
@@ -148,7 +148,7 @@ internal data class NoteResolveRequest(
     val includeDone: Boolean? = null,
 )
 
-internal data class NoteResolveResult(
+data class NoteResolveResult(
     val requestedText: String,
     val normalizedText: String,
     val strategy: String,
@@ -180,7 +180,7 @@ internal data class NoteResolveResult(
     }
 }
 
-internal fun String.toNoteResolveScope(defaultScope: NoteResolveScope = NoteResolveScope.All): NoteResolveScope = when (trim().lowercase()) {
+fun String.toNoteResolveScope(defaultScope: NoteResolveScope = NoteResolveScope.All): NoteResolveScope = when (trim().lowercase()) {
     "active" -> NoteResolveScope.Active
     "archived" -> NoteResolveScope.Archived
     "deleted", "trash" -> NoteResolveScope.Deleted
