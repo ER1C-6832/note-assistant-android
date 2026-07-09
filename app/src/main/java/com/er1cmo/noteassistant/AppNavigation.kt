@@ -51,8 +51,10 @@ fun AppNavigation(
                 is UiCommand.OpenNote -> navController.navigate(AppRoute.Detail.createRoute(command.noteId))
                 is UiCommand.ShowMessage -> Unit
                 is UiCommand.ShowConfirmation -> {
-                    pendingConfirmationDialog = command
-                    lastAutoConfirmationId = command.confirmationId
+                    if (command.confirmationId != lastAutoConfirmationId) {
+                        pendingConfirmationDialog = command
+                        lastAutoConfirmationId = command.confirmationId
+                    }
                 }
                 is UiCommand.ShowSearch -> navController.navigateToNotesRoot()
                 is UiCommand.ShowTag -> navController.navigateToNotesRoot()

@@ -8,13 +8,14 @@ import com.er1cmo.noteassistant.assistant.mcpbase.McpToolResult
 import com.er1cmo.noteassistant.assistant.mcpbase.ToolArgumentParser
 import com.er1cmo.noteassistant.assistant.tools.common.Phase4ExtendedCommandService
 import com.er1cmo.noteassistant.assistant.tools.common.toMcpToolResult
+import com.er1cmo.noteassistant.notes.domain.command.CommandStatus
 import javax.inject.Inject
 
 class AssistantConfirmTool @Inject constructor(
     private val commandService: Phase4ExtendedCommandService,
 ) : McpTool {
     override val name: String = "assistant.confirm"
-    override val description: String = "确认执行 pending confirmation。confirmation_id 可省略；若当前只有一个待确认操作，会确认最近这个操作。"
+    override val description: String = "确认执行 pending confirmation。confirmation_id 可省略；若当前只有一个待确认操作，会确认最近这个操作。重复确认同一个已完成 confirmation 会被视为幂等成功。"
     override val riskLevel: McpRiskLevel = McpRiskLevel.High
     override val descriptor: McpToolDescriptor = McpToolDescriptor(
         name = name,
@@ -49,6 +50,15 @@ class AssistantConfirmTool @Inject constructor(
             argumentsJson = argumentsJson,
         ) ?: return pendingConfirmationAmbiguous(argumentsJson)
         val result = commandService.confirmPendingCommand(confirmationId)
+        if (result.status == CommandStatus.Failed && result.isIdempotentAlreadyConfirmed()) {
+            return McpToolResult.success(
+                message = "该操作已经确认执行，无需重复确认",
+                toolName = name,
+                risk = McpRiskLevel.High,
+                commandLogId = result.commandLogId,
+                resultJson = "{\"confirmation_id\":\"${confirmationId.escapeJson()}\",\"already_confirmed\":true}",
+            )
+        }
         return result.toMcpToolResult(toolName = name, argumentsJson = argumentsJson)
     }
 
@@ -77,5 +87,22 @@ class AssistantConfirmTool @Inject constructor(
             errorCode = "confirmation_id_required",
             risk = McpRiskLevel.High,
         )
+    }
+}
+
+private fun com.er1cmo.noteassistant.notes.domain.command.CommandResult.isIdempotentAlreadyConfirmed(): Boolean {
+    return message.contains("不能再次确认") && message.contains("confirmed")
+}
+
+private fun String.escapeJson(): String = buildString {
+    for (char in this@escapeJson) {
+        when (char) {
+            '\\' -> append("\\\\")
+            '"' -> append("\\\"")
+            '\n' -> append("\\n")
+            '\r' -> append("\\r")
+            '\t' -> append("\\t")
+            else -> append(char)
+        }
     }
 }
