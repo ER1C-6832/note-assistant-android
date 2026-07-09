@@ -41,6 +41,16 @@ data class ToolCallUiState(
         get() = status != ToolCallUiStatus.Running
 }
 
+data class ToolCallConfirmationRequest(
+    val confirmationId: String,
+    val toolName: String?,
+    val title: String,
+    val message: String,
+    val detail: String?,
+    val commandLogId: Long?,
+    val updatedAtMillis: Long,
+)
+
 sealed interface ToolCallEvent {
     val state: ToolCallUiState
 
@@ -61,9 +71,11 @@ sealed interface ToolCallEvent {
 class ToolCallEventStore @Inject constructor() {
     private val mutableState = MutableStateFlow(ToolCallUiState())
     private val mutableEvents = MutableSharedFlow<ToolCallEvent>(extraBufferCapacity = 32)
+    private val mutableConfirmationRequests = MutableSharedFlow<ToolCallConfirmationRequest>(extraBufferCapacity = 16)
 
     val state: StateFlow<ToolCallUiState> = mutableState.asStateFlow()
     val events: SharedFlow<ToolCallEvent> = mutableEvents.asSharedFlow()
+    val confirmationRequests: SharedFlow<ToolCallConfirmationRequest> = mutableConfirmationRequests.asSharedFlow()
 
     fun markRunning(
         toolName: String,
@@ -104,6 +116,9 @@ class ToolCallEventStore @Inject constructor() {
         )
         mutableState.value = next
         mutableEvents.tryEmit(ToolCallEvent.Completed(next))
+        if (next.status == ToolCallUiStatus.RequiresConfirmation) {
+            next.toConfirmationRequest()?.let { mutableConfirmationRequests.tryEmit(it) }
+        }
     }
 
     fun markFailed(
@@ -256,6 +271,56 @@ private fun detailMessage(result: McpToolResult): String? {
         .filter { it.isNotBlank() }
         .joinToString("\n")
         .ifBlank { null }
+}
+
+private fun ToolCallUiState.toConfirmationRequest(): ToolCallConfirmationRequest? {
+    val id = confirmationId?.takeIf { it.isNotBlank() } ?: return null
+    return ToolCallConfirmationRequest(
+        confirmationId = id,
+        toolName = toolName,
+        title = confirmationDialogTitle(toolName),
+        message = confirmationDialogMessage(
+            toolName = toolName,
+            summary = confirmationSummary,
+            detail = detail,
+            fallback = message,
+        ),
+        detail = detail,
+        commandLogId = commandLogId,
+        updatedAtMillis = updatedAtMillis,
+    )
+}
+
+private fun confirmationDialogTitle(toolName: String?): String = when (toolName) {
+    "notes.delete" -> "确认删除便签？"
+    "notes.replace_content" -> "确认覆盖正文？"
+    "notes.restore_revision" -> "确认恢复历史版本？"
+    "notes.clear_done" -> "确认清理已完成？"
+    "tags.bind" -> "确认替换标签？"
+    "tags.delete" -> "确认删除标签？"
+    "tags.rename" -> "确认重命名标签？"
+    else -> "需要确认操作"
+}
+
+private fun confirmationDialogMessage(
+    toolName: String?,
+    summary: String?,
+    detail: String?,
+    fallback: String,
+): String {
+    val primary = listOf(summary, detail, fallback)
+        .firstOrNull { !it.isNullOrBlank() }
+        .orEmpty()
+    return when (toolName) {
+        "notes.delete" -> primary.ifBlank { "这个操作会把便签移入最近删除。确认继续吗？" }
+        "notes.replace_content" -> primary.ifBlank { "这个操作会覆盖便签正文。确认继续吗？" }
+        "notes.restore_revision" -> primary.ifBlank { "这个操作会把便签恢复到历史版本。确认继续吗？" }
+        "notes.clear_done" -> primary.ifBlank { "这个操作会批量处理已完成待办。确认继续吗？" }
+        "tags.bind" -> primary.ifBlank { "这个操作会替换便签标签。确认继续吗？" }
+        "tags.delete" -> primary.ifBlank { "这个操作会删除标签并影响关联便签。确认继续吗？" }
+        "tags.rename" -> primary.ifBlank { "这个操作会重命名标签。确认继续吗？" }
+        else -> primary.ifBlank { "请确认是否执行这个高风险操作。" }
+    }
 }
 
 private fun sanitizeMessage(message: String): String {

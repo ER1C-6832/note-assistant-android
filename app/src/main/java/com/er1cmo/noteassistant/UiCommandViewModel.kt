@@ -4,12 +4,13 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.er1cmo.noteassistant.assistant.bridge.UiCommand
 import com.er1cmo.noteassistant.assistant.bridge.UiCommandBus
+import com.er1cmo.noteassistant.assistant.runtime.mcp.McpProtocolClient
+import com.er1cmo.noteassistant.assistant.runtime.toolcall.ToolCallConfirmationRequest
 import com.er1cmo.noteassistant.assistant.runtime.toolcall.ToolCallEventStore
 import com.er1cmo.noteassistant.assistant.runtime.toolcall.ToolCallUiState
-import com.er1cmo.noteassistant.assistant.tools.common.Phase4ExtendedCommandService
-import com.er1cmo.noteassistant.assistant.tools.common.toMcpToolResult
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -17,39 +18,26 @@ import kotlinx.coroutines.launch
 @HiltViewModel
 class UiCommandViewModel @Inject constructor(
     uiCommandBus: UiCommandBus,
-    private val commandService: Phase4ExtendedCommandService,
-    private val toolCallEventStore: ToolCallEventStore,
+    private val mcpProtocolClient: McpProtocolClient,
+    toolCallEventStore: ToolCallEventStore,
 ) : ViewModel() {
     val commands: SharedFlow<UiCommand> = uiCommandBus.commands
     val toolCallState: StateFlow<ToolCallUiState> = toolCallEventStore.state
+    val confirmationRequests: SharedFlow<ToolCallConfirmationRequest> = toolCallEventStore.confirmationRequests
 
     fun confirmPendingCommand(confirmationId: String) {
         if (confirmationId.isBlank()) return
         val argumentsJson = confirmationArgumentsJson(confirmationId)
-        viewModelScope.launch {
-            toolCallEventStore.markRunning("assistant.confirm", argumentsJson)
-            val result = commandService.confirmPendingCommand(confirmationId)
-            toolCallEventStore.markCompleted(
-                result.toMcpToolResult(
-                    toolName = "assistant.confirm",
-                    argumentsJson = argumentsJson,
-                ),
-            )
+        viewModelScope.launch(Dispatchers.IO) {
+            mcpProtocolClient.handleToolCall("assistant.confirm", argumentsJson)
         }
     }
 
     fun rejectPendingCommand(confirmationId: String) {
         if (confirmationId.isBlank()) return
         val argumentsJson = confirmationArgumentsJson(confirmationId)
-        viewModelScope.launch {
-            toolCallEventStore.markRunning("assistant.reject", argumentsJson)
-            val result = commandService.rejectPendingCommand(confirmationId)
-            toolCallEventStore.markCompleted(
-                result.toMcpToolResult(
-                    toolName = "assistant.reject",
-                    argumentsJson = argumentsJson,
-                ),
-            )
+        viewModelScope.launch(Dispatchers.IO) {
+            mcpProtocolClient.handleToolCall("assistant.reject", argumentsJson)
         }
     }
 }
