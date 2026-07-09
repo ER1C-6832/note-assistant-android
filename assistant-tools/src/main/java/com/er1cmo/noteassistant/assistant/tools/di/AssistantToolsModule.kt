@@ -37,6 +37,7 @@ import com.er1cmo.noteassistant.assistant.tools.ui.UiOpenNoteTool
 import com.er1cmo.noteassistant.assistant.tools.ui.UiShowArchiveTool
 import com.er1cmo.noteassistant.assistant.tools.ui.UiShowConfirmationTool
 import com.er1cmo.noteassistant.assistant.tools.ui.UiShowNoteListTool
+import com.er1cmo.noteassistant.assistant.tools.ui.UiShowPinnedTool
 import com.er1cmo.noteassistant.assistant.tools.ui.UiShowSearchTool
 import com.er1cmo.noteassistant.assistant.tools.ui.UiShowTagTool
 import com.er1cmo.noteassistant.assistant.tools.ui.UiShowTrashTool
@@ -53,8 +54,8 @@ abstract class AssistantToolsModule {
     @IntoSet
     abstract fun bindNoteToolExecutor(registry: NoteToolRegistry): McpToolExecutor
 
-    @Binds @IntoSet abstract fun bindNotesSearchTool(tool: NotesSearchTool): McpTool
     @Binds @IntoSet abstract fun bindNotesResolveTool(tool: NotesResolveTool): McpTool
+    @Binds @IntoSet abstract fun bindNotesSearchTool(tool: NotesSearchTool): McpTool
     @Binds @IntoSet abstract fun bindNotesListRecentTool(tool: NotesListRecentTool): McpTool
     @Binds @IntoSet abstract fun bindNotesGetTool(tool: NotesGetTool): McpTool
     @Binds @IntoSet abstract fun bindNotesCreateTool(tool: NotesCreateTool): McpTool
@@ -80,6 +81,7 @@ abstract class AssistantToolsModule {
     @Binds @IntoSet abstract fun bindUiShowConfirmationTool(tool: UiShowConfirmationTool): McpTool
     @Binds @IntoSet abstract fun bindUiShowSearchTool(tool: UiShowSearchTool): McpTool
     @Binds @IntoSet abstract fun bindUiShowNoteListTool(tool: UiShowNoteListTool): McpTool
+    @Binds @IntoSet abstract fun bindUiShowPinnedTool(tool: UiShowPinnedTool): McpTool
     @Binds @IntoSet abstract fun bindUiShowTagTool(tool: UiShowTagTool): McpTool
     @Binds @IntoSet abstract fun bindUiShowArchiveTool(tool: UiShowArchiveTool): McpTool
     @Binds @IntoSet abstract fun bindUiShowTrashTool(tool: UiShowTrashTool): McpTool

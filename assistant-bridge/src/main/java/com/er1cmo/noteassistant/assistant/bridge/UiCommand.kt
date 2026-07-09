@@ -9,4 +9,5 @@ sealed interface UiCommand {
     data class ShowTag(val tagId: Long?, val tagName: String) : UiCommand
     data object ShowArchive : UiCommand
     data object ShowTrash : UiCommand
+    data object ShowPinned : UiCommand
 }

@@ -2,12 +2,9 @@ package com.er1cmo.noteassistant.notes.ui.list
 
 import android.graphics.Color as AndroidColor
 import androidx.activity.compose.BackHandler
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -18,7 +15,6 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -31,7 +27,6 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -50,19 +45,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.er1cmo.noteassistant.notes.domain.model.Note
 import com.er1cmo.noteassistant.notes.domain.model.NoteType
 import com.er1cmo.noteassistant.notes.domain.model.Tag
-import com.er1cmo.noteassistant.notes.ui.R
 import com.er1cmo.noteassistant.notes.ui.components.NoteCard
-import kotlin.math.roundToInt
 
 private const val FILTER_ALL = "全部"
 private const val FILTER_PINNED = "置顶"
@@ -81,11 +71,13 @@ fun NoteListRoute(
     onCreateClick: (String?) -> Unit,
     onNoteClick: (Long) -> Unit,
     onSettingsClick: () -> Unit,
+    externalCommand: NoteListExternalCommand? = null,
     viewModel: NoteListViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsState()
     NoteListScreen(
         state = state,
+        externalCommand = externalCommand,
         onCreateClick = onCreateClick,
         onNoteClick = onNoteClick,
         onSettingsClick = onSettingsClick,
@@ -106,6 +98,7 @@ fun NoteListRoute(
 @Composable
 fun NoteListScreen(
     state: NoteListState,
+    externalCommand: NoteListExternalCommand? = null,
     onCreateClick: (String?) -> Unit,
     onNoteClick: (Long) -> Unit,
     onSettingsClick: () -> Unit,
@@ -121,9 +114,9 @@ fun NoteListScreen(
     onRenameTag: (Long, String) -> Unit,
     onDeleteTag: (Long) -> Unit,
 ) {
+    var selectedFilter by rememberSaveable { mutableStateOf(FILTER_ALL) }
+    var searchQuery by rememberSaveable { mutableStateOf("") }
     var tagPanelOpen by remember { mutableStateOf(false) }
-    var selectedFilter by remember { mutableStateOf(FILTER_ALL) }
-    var searchQuery by remember { mutableStateOf("") }
     var selectionMode by remember { mutableStateOf(false) }
     var selectedIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
     var addTagDialogOpen by remember { mutableStateOf(false) }
@@ -131,7 +124,6 @@ fun NoteListScreen(
     var confirmAction by remember { mutableStateOf<BatchConfirmAction?>(null) }
     var snackbarMessage by remember { mutableStateOf<String?>(null) }
     var pinnedHomeTagId by rememberSaveable { mutableStateOf<Long?>(null) }
-    var pageDragOffset by remember { mutableStateOf(0f) }
     var gridColumns by rememberSaveable { mutableStateOf(1) }
     val snackbarHostState = remember { SnackbarHostState() }
 
@@ -141,7 +133,6 @@ fun NoteListScreen(
     val pinnedHomeTag = remember(state.tags, pinnedHomeTagId) {
         pinnedHomeTagId?.let { id -> state.tags.firstOrNull { it.id == id } }
     }
-    val swipeFilters = remember(pinnedHomeTag) { MAIN_FILTERS + listOfNotNull(pinnedHomeTag?.filterValue()) }
     val selectedCreateTag = selectedTag?.name
     val displayNotes = remember(state.notes, state.deletedNotes, state.archivedNotes, selectedFilter, selectedTag, searchQuery) {
         val scopedNotes = when {
@@ -172,37 +163,69 @@ fun NoteListScreen(
         selectedIds = emptySet()
     }
 
-    fun clearSelectionOnly() {
-        selectedIds = emptySet()
-    }
-
     fun selectFilter(filter: String) {
         selectedFilter = filter
         exitSelection()
     }
 
-    fun switchToNextMainFilter() {
-        val currentIndex = swipeFilters.indexOf(selectedFilter)
-        val next = when {
-            currentIndex in 0 until swipeFilters.lastIndex -> swipeFilters[currentIndex + 1]
-            currentIndex == -1 -> FILTER_ALL
-            else -> selectedFilter
+    fun showTagByExternalCommand(tagId: Long?, tagName: String) {
+        val cleanedName = tagName.trim().trimStart('#')
+        val tag = when {
+            tagId != null -> state.tags.firstOrNull { it.id == tagId }
+            cleanedName.isNotBlank() -> state.tags.firstOrNull {
+                it.name.equals(cleanedName, ignoreCase = true) ||
+                    it.normalizedName == cleanedName.lowercase()
+            }
+            else -> null
         }
-        if (next != selectedFilter) selectFilter(next)
+        if (tag != null) {
+            selectedFilter = tag.filterValue()
+            searchQuery = ""
+            snackbarMessage = "已显示 #${tag.name}"
+        } else {
+            selectedFilter = FILTER_ALL
+            searchQuery = cleanedName
+            snackbarMessage = if (cleanedName.isBlank()) "没有指定标签" else "没有找到标签 #$cleanedName，已改为搜索"
+        }
+        tagPanelOpen = false
+        exitSelection()
     }
 
-    fun switchToPreviousOrOpenTags() {
-        if (selectedFilter == FILTER_ALL) {
-            tagPanelOpen = true
-            return
+    LaunchedEffect(externalCommand, state.tags) {
+        when (val command = externalCommand) {
+            null -> Unit
+            is NoteListExternalCommand.ShowSearch -> {
+                selectedFilter = FILTER_ALL
+                searchQuery = command.query.trim()
+                tagPanelOpen = false
+                exitSelection()
+            }
+            is NoteListExternalCommand.ShowTag -> showTagByExternalCommand(command.tagId, command.tagName)
+            is NoteListExternalCommand.ShowArchive -> {
+                selectedFilter = FILTER_ARCHIVED
+                searchQuery = ""
+                tagPanelOpen = false
+                exitSelection()
+            }
+            is NoteListExternalCommand.ShowTrash -> {
+                selectedFilter = FILTER_DELETED
+                searchQuery = ""
+                tagPanelOpen = false
+                exitSelection()
+            }
+            is NoteListExternalCommand.ShowPinned -> {
+                selectedFilter = FILTER_PINNED
+                searchQuery = ""
+                tagPanelOpen = false
+                exitSelection()
+            }
+            is NoteListExternalCommand.ShowNoteList -> {
+                selectedFilter = FILTER_ALL
+                searchQuery = ""
+                tagPanelOpen = false
+                exitSelection()
+            }
         }
-        val currentIndex = swipeFilters.indexOf(selectedFilter)
-        val previous = when {
-            currentIndex > 0 -> swipeFilters[currentIndex - 1]
-            currentIndex == -1 -> FILTER_ALL
-            else -> selectedFilter
-        }
-        if (previous != selectedFilter) selectFilter(previous)
     }
 
     LaunchedEffect(pinnedHomeTagId, state.tags) {
@@ -245,7 +268,12 @@ fun NoteListScreen(
                 ) {
                     HeaderBar(onSettingsClick = onSettingsClick, textColor = onHomeColor)
                     SearchBox(query = searchQuery, onQueryChange = { searchQuery = it }, onClearClick = { searchQuery = "" })
-                    FilterBar(selectedFilter = selectedFilter, pinnedHomeTag = pinnedHomeTag, onTagPanelClick = { tagPanelOpen = true }, onFilterSelected = ::selectFilter)
+                    FilterBar(
+                        selectedFilter = selectedFilter,
+                        pinnedHomeTag = pinnedHomeTag,
+                        onTagPanelClick = { tagPanelOpen = true },
+                        onFilterSelected = ::selectFilter,
+                    )
                     SummaryBar(
                         scopeLabel = scopeLabel,
                         searchQuery = searchQuery,
@@ -255,27 +283,18 @@ fun NoteListScreen(
                         onToggleColumns = { gridColumns = if (gridColumns == 1) 2 else 1 },
                     )
 
-                    val swipeModifier = Modifier
-                        .offset { IntOffset(pageDragOffset.roundToInt(), 0) }
-                        .swipeToSwitchFilters(
-                            enabled = !selectionMode && !tagPanelOpen,
-                            onDragOffsetChange = { pageDragOffset = it },
-                            onSwipeLeft = ::switchToNextMainFilter,
-                            onSwipeRight = ::switchToPreviousOrOpenTags,
-                        )
-
                     if (displayNotes.isEmpty()) {
                         EmptyNotes(
                             selectedFilter = selectedFilter,
                             selectedTagName = selectedCreateTag,
                             searchQuery = searchQuery,
                             onCreateClick = { onCreateClick(selectedCreateTag) },
-                            modifier = swipeModifier.weight(1f),
+                            modifier = Modifier.weight(1f),
                         )
                     } else {
                         val rows = remember(displayNotes, gridColumns) { displayNotes.chunked(gridColumns) }
                         LazyColumn(
-                            modifier = swipeModifier.weight(1f),
+                            modifier = Modifier.weight(1f),
                             verticalArrangement = Arrangement.spacedBy(10.dp),
                         ) {
                             items(rows, key = { row -> row.joinToString(separator = ":") { it.id.toString() } }) { rowNotes ->
@@ -291,7 +310,11 @@ fun NoteListScreen(
                                             selectionMode = selectionMode,
                                             modifier = Modifier.weight(1f),
                                             onClick = {
-                                                if (selectionMode) selectedIds = selectedIds.toggle(note.id) else onNoteClick(note.id)
+                                                if (selectionMode) {
+                                                    selectedIds = selectedIds.toggle(note.id)
+                                                } else {
+                                                    onNoteClick(note.id)
+                                                }
                                             },
                                             onLongClick = {
                                                 selectionMode = true
@@ -303,7 +326,7 @@ fun NoteListScreen(
                                     repeat(gridColumns - rowNotes.size) { Spacer(Modifier.weight(1f)) }
                                 }
                             }
-                            item { Spacer(Modifier.height(if (selectionMode) 120.dp else 96.dp)) }
+                            item { Spacer(Modifier.height(if (selectionMode) 126.dp else 96.dp)) }
                         }
                     }
                 }
@@ -318,10 +341,8 @@ fun NoteListScreen(
                             .padding(bottom = 14.dp)
                             .width(154.dp)
                             .height(46.dp),
-                        contentPadding = ButtonDefaults.ContentPadding,
                     ) { Text("+ 新建") }
                 }
-
 
                 if (selectionMode) {
                     SelectionFloatingBar(
@@ -379,8 +400,6 @@ fun NoteListScreen(
                             .background(Color.Black.copy(alpha = 0.16f))
                             .clickable(onClick = { tagPanelOpen = false }),
                     )
-                }
-                AnimatedVisibility(visible = tagPanelOpen, enter = slideInHorizontally(initialOffsetX = { -it }), exit = slideOutHorizontally(targetOffsetX = { -it })) {
                     TagDrawer(
                         selectedFilter = selectedFilter,
                         pinnedHomeTagId = pinnedHomeTagId,
@@ -497,10 +516,8 @@ private fun HeaderBar(onSettingsClick: () -> Unit, textColor: Color) {
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
-        Surface(onClick = onSettingsClick, shape = CircleShape, color = Color.White.copy(alpha = 0.96f), shadowElevation = 2.dp, tonalElevation = 1.dp, modifier = Modifier.size(40.dp)) {
-            Box(contentAlignment = Alignment.Center) {
-                Icon(painter = painterResource(id = R.drawable.ic_settings_gear_simple), contentDescription = "设置", modifier = Modifier.size(22.dp), tint = Color(0xFF667085))
-            }
+        Surface(onClick = onSettingsClick, shape = CircleShape, color = Color.White.copy(alpha = 0.96f), shadowElevation = 2.dp, tonalElevation = 1.dp) {
+            Text("设置", modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp), color = Color(0xFF667085), style = MaterialTheme.typography.labelMedium)
         }
     }
 }
@@ -525,7 +542,7 @@ private fun SearchBox(query: String, onQueryChange: (String) -> Unit, onClearCli
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Text("⌕", color = Color(0xFF7D8190), style = MaterialTheme.typography.bodyMedium)
+        Text("搜索", color = Color(0xFF7D8190), style = MaterialTheme.typography.bodySmall)
         BasicTextField(
             value = query,
             onValueChange = onQueryChange,
@@ -554,7 +571,7 @@ private fun FilterBar(
 ) {
     Row(modifier = Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
         Surface(onClick = onTagPanelClick, shape = RoundedCornerShape(16.dp), color = Color(0xFFFFE3A1), tonalElevation = 1.dp) {
-            Text(text = "☰", modifier = Modifier.padding(horizontal = 18.dp, vertical = 9.dp), style = MaterialTheme.typography.titleMedium, color = Color(0xFF604410), maxLines = 1)
+            Text(text = "标签", modifier = Modifier.padding(horizontal = 16.dp, vertical = 9.dp), style = MaterialTheme.typography.labelLarge, color = Color(0xFF604410), maxLines = 1)
         }
         MAIN_FILTERS.forEach { filter ->
             FilterPill(text = filter, selected = selectedFilter == filter, onClick = { onFilterSelected(filter) })
@@ -571,7 +588,7 @@ private fun FilterPill(text: String, selected: Boolean, onClick: () -> Unit) {
         onClick = onClick,
         shape = RoundedCornerShape(16.dp),
         color = if (selected) Color(0xFFEDE0FF) else Color.White,
-        border = androidx.compose.foundation.BorderStroke(1.dp, if (selected) Color.Transparent else Color(0xFF535864)),
+        border = BorderStroke(1.dp, if (selected) Color.Transparent else Color(0xFF535864)),
         tonalElevation = if (selected) 1.dp else 0.dp,
     ) {
         Text(text = text, modifier = Modifier.padding(horizontal = 18.dp, vertical = 9.dp), style = MaterialTheme.typography.labelLarge, color = Color(0xFF222832), maxLines = 1)
@@ -659,7 +676,7 @@ private fun CompactActionPill(text: String, danger: Boolean = false, enabled: Bo
             danger -> Color(0xFFFFE4E6)
             else -> Color.White
         },
-        border = androidx.compose.foundation.BorderStroke(1.dp, if (danger) Color(0xFFFDA4AF) else Color(0xFFE5E7EB)),
+        border = BorderStroke(1.dp, if (danger) Color(0xFFFDA4AF) else Color(0xFFE5E7EB)),
     ) {
         Text(
             text = text,
@@ -763,28 +780,23 @@ private fun TagDrawer(
                 )
             }
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Row(
+                BasicTextField(
+                    value = newTagName,
+                    onValueChange = { newTagName = it },
+                    singleLine = true,
+                    textStyle = MaterialTheme.typography.bodyMedium.copy(color = primaryText),
                     modifier = Modifier
                         .weight(1f)
                         .height(42.dp)
                         .background(fieldBg, RoundedCornerShape(14.dp))
                         .padding(horizontal = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    BasicTextField(
-                        value = newTagName,
-                        onValueChange = { newTagName = it },
-                        singleLine = true,
-                        textStyle = MaterialTheme.typography.bodyMedium.copy(color = primaryText),
-                        modifier = Modifier.fillMaxWidth(),
-                        decorationBox = { innerTextField ->
-                            Box(contentAlignment = Alignment.CenterStart) {
-                                if (newTagName.isBlank()) Text("新建标签", color = secondaryText, style = MaterialTheme.typography.bodyMedium)
-                                innerTextField()
-                            }
-                        },
-                    )
-                }
+                    decorationBox = { innerTextField ->
+                        Box(contentAlignment = Alignment.CenterStart) {
+                            if (newTagName.isBlank()) Text("新建标签", color = secondaryText, style = MaterialTheme.typography.bodyMedium)
+                            innerTextField()
+                        }
+                    },
+                )
                 Button(
                     onClick = {
                         val name = newTagName.trim()
@@ -795,7 +807,6 @@ private fun TagDrawer(
                     },
                     shape = RoundedCornerShape(14.dp),
                     modifier = Modifier.height(42.dp),
-                    contentPadding = ButtonDefaults.ContentPadding,
                 ) { Text("创建") }
             }
 
@@ -886,7 +897,7 @@ private fun TagDrawerRow(text: String, selected: Boolean, selectedBg: Color, tex
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(text = text, modifier = Modifier.weight(1f), color = textColor, style = MaterialTheme.typography.bodyMedium, maxLines = 1)
-        if (selected) Text("✓", color = textColor, fontWeight = FontWeight.SemiBold)
+        if (selected) Text("ok", color = textColor, fontWeight = FontWeight.SemiBold)
     }
 }
 
@@ -912,45 +923,13 @@ private fun TagManageRow(
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(text = "# ${tag.name}", modifier = Modifier.weight(1f).clickable(onClick = onSelect), color = textColor, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            if (selected) Text("✓", color = textColor, fontWeight = FontWeight.SemiBold)
+            if (selected) Text("ok", color = textColor, fontWeight = FontWeight.SemiBold)
         }
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(text = if (pinnedToHome) "取消固定" else "固定首页", modifier = Modifier.clickable(onClick = onToggleHomePin), color = actionColor, style = MaterialTheme.typography.labelMedium)
             Text(text = "重命名", modifier = Modifier.clickable(onClick = onRename), color = actionColor, style = MaterialTheme.typography.labelMedium)
             Text(text = "删除", modifier = Modifier.clickable(onClick = onDelete), color = Color(0xFFB42318), style = MaterialTheme.typography.labelMedium)
         }
-    }
-}
-
-private fun Modifier.swipeToSwitchFilters(
-    enabled: Boolean,
-    onDragOffsetChange: (Float) -> Unit,
-    onSwipeLeft: () -> Unit,
-    onSwipeRight: () -> Unit,
-): Modifier = if (!enabled) {
-    this
-} else {
-    pointerInput(Unit) {
-        var totalDrag = 0f
-        detectHorizontalDragGestures(
-            onDragStart = {
-                totalDrag = 0f
-                onDragOffsetChange(0f)
-            },
-            onHorizontalDrag = { change, dragAmount ->
-                change.consume()
-                totalDrag += dragAmount
-                onDragOffsetChange((totalDrag * 0.42f).coerceIn(-112f, 112f))
-            },
-            onDragEnd = {
-                when {
-                    totalDrag < -72f -> onSwipeLeft()
-                    totalDrag > 72f -> onSwipeRight()
-                }
-                onDragOffsetChange(0f)
-            },
-            onDragCancel = { onDragOffsetChange(0f) },
-        )
     }
 }
 
