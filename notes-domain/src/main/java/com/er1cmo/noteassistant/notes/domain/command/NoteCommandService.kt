@@ -9,11 +9,11 @@ import com.er1cmo.noteassistant.notes.domain.model.PendingConfirmation
 import com.er1cmo.noteassistant.notes.domain.model.Tag
 import com.er1cmo.noteassistant.notes.domain.repository.CommandTraceRepository
 import com.er1cmo.noteassistant.notes.domain.usecase.NoteUseCases
+import java.util.UUID
+import javax.inject.Inject
 import kotlinx.coroutines.flow.first
 import org.json.JSONArray
 import org.json.JSONObject
-import java.util.UUID
-import javax.inject.Inject
 
 class NoteCommandService @Inject constructor(
     private val noteUseCases: NoteUseCases,
@@ -48,6 +48,7 @@ class NoteCommandService @Inject constructor(
                 ToolName.NotesUpdateTitle -> updateTitle(arguments, argumentsJson, source)
                 ToolName.NotesReplaceContent -> replaceContent(arguments, argumentsJson, source, existingLogId = null, fromConfirmation = false)
                 ToolName.NotesToggleDone -> toggleDone(arguments, argumentsJson, source)
+                ToolName.NotesConvertType -> convertType(arguments, argumentsJson, source)
                 ToolName.NotesPin -> setPinned(arguments, argumentsJson, source)
                 ToolName.NotesArchive -> setArchived(arguments, argumentsJson, source)
                 ToolName.NotesDelete -> deleteNotes(arguments, argumentsJson, source, existingLogId = null, fromConfirmation = false)
@@ -352,15 +353,96 @@ class NoteCommandService @Inject constructor(
         if (noteId <= 0) return validationFailed(ToolName.NotesToggleDone, rawJson, source, "缺少 note_id")
         val note = noteUseCases.getNote(noteId) ?: return notFound(ToolName.NotesToggleDone, rawJson, source, noteId)
         if (note.deleted) return validationFailed(ToolName.NotesToggleDone, rawJson, source, "最近删除中的便签不能标记完成")
-        if (note.type != NoteType.Todo) return validationFailed(ToolName.NotesToggleDone, rawJson, source, "只有待办便签可以标记完成")
         val done = if (args.has("done")) args.optBoolean("done", false) else !note.isDone
+        val autoConvertToTodo = if (args.has("auto_convert_to_todo")) args.optBoolean("auto_convert_to_todo", true) else true
         val risk = riskPolicy.classify(CommandRiskInput(toolName = ToolName.NotesToggleDone, source = source, affectedNoteCount = 1))
         val logId = insertInitialLog(ToolName.NotesToggleDone, rawJson, source, risk)
+
+        if (note.type != NoteType.Todo) {
+            if (!done || !autoConvertToTodo) {
+                finishLog(
+                    logId = logId,
+                    status = CommandStatus.Failed,
+                    errorCode = CommandErrorCode.ValidationError,
+                    errorMessage = "普通便签不能取消完成；如需标记完成，请允许自动转换为待办",
+                )
+                return CommandResult.failure(
+                    message = "普通便签不能取消完成；如需标记完成，请允许自动转换为待办",
+                    riskLevel = risk,
+                    commandLogId = logId,
+                    errorCode = CommandErrorCode.ValidationError,
+                )
+            }
+            insertRevisionSnapshots(logId, source, "convert_normal_to_todo_and_mark_done", listOf(note))
+            noteUseCases.updateNote(note.id, note.title, note.content, NoteType.Todo, note.color, note.tags.toTagText())
+            val converted = noteUseCases.getNote(note.id) ?: note.copy(type = NoteType.Todo)
+            if (!converted.isDone) noteUseCases.toggleTodoDone(note.id, true)
+            val resultJson = JSONObject()
+                .put("note_id", note.id)
+                .put("previous_type", note.type.storageValue())
+                .put("type", NoteType.Todo.storageValue())
+                .put("converted_to_todo", true)
+                .put("done", true)
+                .toString()
+            finishLog(logId = logId, status = CommandStatus.Success, resultJson = resultJson, affectedNoteIds = listOf(note.id))
+            return CommandResult.success("已转为待办并标记完成", risk, logId, affectedNoteIds = listOf(note.id), resultJson = resultJson)
+        }
+
         insertRevisionSnapshots(logId, source, "toggle_done", listOf(note))
         noteUseCases.toggleTodoDone(note.id, done)
-        val resultJson = JSONObject().put("note_id", note.id).put("done", done).toString()
+        val resultJson = JSONObject()
+            .put("note_id", note.id)
+            .put("type", NoteType.Todo.storageValue())
+            .put("converted_to_todo", false)
+            .put("done", done)
+            .toString()
         finishLog(logId = logId, status = CommandStatus.Success, resultJson = resultJson, affectedNoteIds = listOf(note.id))
         return CommandResult.success(if (done) "已标记完成" else "已取消完成", risk, logId, affectedNoteIds = listOf(note.id), resultJson = resultJson)
+    }
+
+    private suspend fun convertType(args: JSONObject, rawJson: String, source: CommandSource): CommandResult {
+        val noteId = args.optLong("note_id", 0L)
+        if (noteId <= 0) return validationFailed(ToolName.NotesConvertType, rawJson, source, "缺少 note_id")
+        val targetType = args.optString("target_type", args.optString("type", "")).toNoteTypeOrNull()
+            ?: return validationFailed(ToolName.NotesConvertType, rawJson, source, "type 或 target_type 只能是 normal 或 todo")
+        val note = noteUseCases.getNote(noteId) ?: return notFound(ToolName.NotesConvertType, rawJson, source, noteId)
+        if (note.deleted) return validationFailed(ToolName.NotesConvertType, rawJson, source, "最近删除中的便签不能转换类型")
+        val requestedDone = if (args.has("done")) args.optBoolean("done", false) else null
+        val risk = riskPolicy.classify(CommandRiskInput(toolName = ToolName.NotesConvertType, source = source, affectedNoteCount = 1))
+        val logId = insertInitialLog(ToolName.NotesConvertType, rawJson, source, risk)
+        val typeChanged = note.type != targetType
+        val doneWillChange = targetType == NoteType.Todo && requestedDone != null && note.isDone != requestedDone
+
+        if (!typeChanged && !doneWillChange) {
+            val resultJson = JSONObject()
+                .put("note_id", note.id)
+                .put("previous_type", note.type.storageValue())
+                .put("type", targetType.storageValue())
+                .put("type_changed", false)
+                .put("done", note.isDone)
+                .toString()
+            finishLog(logId = logId, status = CommandStatus.Success, resultJson = resultJson, affectedNoteIds = listOf(note.id))
+            return CommandResult.success("便签已经是${targetType.displayLabel()}，无需转换", risk, logId, affectedNoteIds = listOf(note.id), resultJson = resultJson)
+        }
+
+        insertRevisionSnapshots(logId, source, "convert_type", listOf(note))
+        if (typeChanged) {
+            noteUseCases.updateNote(note.id, note.title, note.content, targetType, note.color, note.tags.toTagText())
+        }
+        val afterType = noteUseCases.getNote(note.id) ?: note.copy(type = targetType)
+        if (targetType == NoteType.Todo && requestedDone != null && afterType.isDone != requestedDone) {
+            noteUseCases.toggleTodoDone(note.id, requestedDone)
+        }
+        val finalNote = noteUseCases.getNote(note.id) ?: afterType
+        val resultJson = JSONObject()
+            .put("note_id", note.id)
+            .put("previous_type", note.type.storageValue())
+            .put("type", targetType.storageValue())
+            .put("type_changed", typeChanged)
+            .put("done", finalNote.isDone)
+            .toString()
+        finishLog(logId = logId, status = CommandStatus.Success, resultJson = resultJson, affectedNoteIds = listOf(note.id))
+        return CommandResult.success("已转换为${targetType.displayLabel()}", risk, logId, affectedNoteIds = listOf(note.id), resultJson = resultJson)
     }
 
     private suspend fun setPinned(
@@ -878,6 +960,11 @@ class NoteCommandService @Inject constructor(
     private fun NoteType.storageValue(): String = when (this) {
         NoteType.Normal -> "normal"
         NoteType.Todo -> "todo"
+    }
+
+    private fun NoteType.displayLabel(): String = when (this) {
+        NoteType.Normal -> "普通便签"
+        NoteType.Todo -> "待办便签"
     }
 
     private fun List<Note>.toCommandResultJson(): String = JSONObject()

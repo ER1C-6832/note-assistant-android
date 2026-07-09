@@ -15,6 +15,7 @@ class NoteRiskPolicy @Inject constructor() {
             ToolName.NotesAppend,
             ToolName.NotesUpdateTitle,
             ToolName.NotesToggleDone,
+            ToolName.NotesConvertType,
             ToolName.NotesPin,
             ToolName.NotesArchive,
             ToolName.NotesRestore,

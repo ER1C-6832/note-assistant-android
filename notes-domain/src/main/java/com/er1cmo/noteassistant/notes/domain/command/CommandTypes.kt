@@ -79,6 +79,7 @@ enum class ToolName(val storageValue: String) {
     NotesUpdateTitle("notes.update_title"),
     NotesReplaceContent("notes.replace_content"),
     NotesToggleDone("notes.toggle_done"),
+    NotesConvertType("notes.convert_type"),
     NotesPin("notes.pin"),
     NotesArchive("notes.archive"),
     NotesDelete("notes.delete"),

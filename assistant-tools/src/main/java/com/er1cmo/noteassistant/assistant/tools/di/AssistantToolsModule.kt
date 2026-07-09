@@ -9,6 +9,7 @@ import com.er1cmo.noteassistant.assistant.tools.assistant.AssistantRejectTool
 import com.er1cmo.noteassistant.assistant.tools.notes.NotesAppendTool
 import com.er1cmo.noteassistant.assistant.tools.notes.NotesArchiveTool
 import com.er1cmo.noteassistant.assistant.tools.notes.NotesClearDoneTool
+import com.er1cmo.noteassistant.assistant.tools.notes.NotesConvertTypeTool
 import com.er1cmo.noteassistant.assistant.tools.notes.NotesCreateTool
 import com.er1cmo.noteassistant.assistant.tools.notes.NotesDeleteTool
 import com.er1cmo.noteassistant.assistant.tools.notes.NotesGetTool
@@ -63,6 +64,7 @@ abstract class AssistantToolsModule {
     @Binds @IntoSet abstract fun bindNotesDeleteTool(tool: NotesDeleteTool): McpTool
     @Binds @IntoSet abstract fun bindNotesUpdateTitleTool(tool: NotesUpdateTitleTool): McpTool
     @Binds @IntoSet abstract fun bindNotesToggleDoneTool(tool: NotesToggleDoneTool): McpTool
+    @Binds @IntoSet abstract fun bindNotesConvertTypeTool(tool: NotesConvertTypeTool): McpTool
     @Binds @IntoSet abstract fun bindNotesPinTool(tool: NotesPinTool): McpTool
     @Binds @IntoSet abstract fun bindNotesReplaceContentTool(tool: NotesReplaceContentTool): McpTool
     @Binds @IntoSet abstract fun bindNotesRestoreRevisionTool(tool: NotesRestoreRevisionTool): McpTool

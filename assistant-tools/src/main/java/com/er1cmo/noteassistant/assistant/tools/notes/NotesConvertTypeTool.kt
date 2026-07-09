@@ -5,12 +5,12 @@ import com.er1cmo.noteassistant.assistant.mcpbase.McpToolDescriptor
 import com.er1cmo.noteassistant.notes.domain.command.NoteCommandService
 import javax.inject.Inject
 
-class NotesToggleDoneTool @Inject constructor(
+class NotesConvertTypeTool @Inject constructor(
     commandService: NoteCommandService,
 ) : AbstractNoteCommandTool(commandService) {
-    override val name: String = "notes.toggle_done"
+    override val name: String = "notes.convert_type"
     override val description: String =
-        "把便签标记完成或取消完成。自然语音场景下，如果目标是普通便签且 done=true，工具会先转换为待办，再标记完成。"
+        "在普通便签和待办便签之间转换。用于把普通便签变成待办，或把待办变回普通便签。转换为待办时可同时设置 done。"
     override val riskLevel: McpRiskLevel = McpRiskLevel.Medium
     override val descriptor: McpToolDescriptor = McpToolDescriptor(
         name = name,
@@ -20,8 +20,9 @@ class NotesToggleDoneTool @Inject constructor(
               "type": "object",
               "properties": {
                 "note_id": { "type": "integer" },
-                "done": { "type": "boolean", "description": "true 表示标记完成；false 表示取消完成。缺省时切换当前完成状态。" },
-                "auto_convert_to_todo": { "type": "boolean", "description": "普通便签被标记完成时是否自动转为待办；默认 true。" }
+                "type": { "type": "string", "enum": ["normal", "todo"] },
+                "target_type": { "type": "string", "enum": ["normal", "todo"] },
+                "done": { "type": "boolean", "description": "仅转换为 todo 时有效，可同时设置完成状态。" }
               },
               "required": ["note_id"],
               "additionalProperties": true
@@ -31,8 +32,8 @@ class NotesToggleDoneTool @Inject constructor(
         mutates = true,
         confirmation = McpToolDescriptor.CONFIRMATION_NOT_REQUIRED,
         examples = listOf(
-            "把刚才那条标记完成：{\"note_id\":123,\"done\":true}",
-            "普通便签标记完成时会先转为待办：{\"note_id\":123,\"done\":true,\"auto_convert_to_todo\":true}",
+            "把这条普通便签转成待办：{\"note_id\":123,\"target_type\":\"todo\"}",
+            "把这条便签转成待办并标记完成：{\"note_id\":123,\"target_type\":\"todo\",\"done\":true}",
         ),
     )
 }
