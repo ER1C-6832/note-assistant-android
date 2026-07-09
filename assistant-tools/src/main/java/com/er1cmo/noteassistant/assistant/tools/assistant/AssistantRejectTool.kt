@@ -14,7 +14,7 @@ class AssistantRejectTool @Inject constructor(
     private val commandService: Phase4ExtendedCommandService,
 ) : McpTool {
     override val name: String = "assistant.reject"
-    override val description: String = "拒绝一个 pending confirmation。不会修改便签。"
+    override val description: String = "拒绝 pending confirmation。confirmation_id 可省略；若当前只有一个待确认操作，会拒绝最近这个操作。"
     override val riskLevel: McpRiskLevel = McpRiskLevel.Low
     override val descriptor: McpToolDescriptor = McpToolDescriptor(
         name = name,
@@ -25,7 +25,6 @@ class AssistantRejectTool @Inject constructor(
               "properties": {
                 "confirmation_id": { "type": "string" }
               },
-              "required": ["confirmation_id"],
               "additionalProperties": false
             }
         """.trimIndent(),
@@ -41,10 +40,38 @@ class AssistantRejectTool @Inject constructor(
         val parser = ToolArgumentParser.parse(argumentsJson).getOrElse { error ->
             return McpToolResult.invalidJson(name, argumentsJson, "assistant.reject 参数不是有效 JSON：${error.message ?: "解析失败"}")
         }
-        val confirmationId = runCatching { parser.requireString("confirmation_id") }.getOrElse { error ->
-            return McpToolResult.failed(error.message ?: "缺少 confirmation_id", name, argumentsJson, "validation_error", McpRiskLevel.Low)
-        }
+        val confirmationId = resolveConfirmationId(
+            explicitConfirmationId = parser.optionalString("confirmation_id"),
+            argumentsJson = argumentsJson,
+        ) ?: return pendingConfirmationAmbiguous(argumentsJson)
         val result = commandService.rejectPendingCommand(confirmationId)
         return result.toMcpToolResult(name, argumentsJson)
+    }
+
+    private suspend fun resolveConfirmationId(
+        explicitConfirmationId: String,
+        argumentsJson: String,
+    ): String? {
+        if (explicitConfirmationId.isNotBlank()) return explicitConfirmationId
+        val pending = commandService.listPendingConfirmations(limit = 2)
+        return when (pending.size) {
+            1 -> pending.first().confirmationId
+            else -> null
+        }
+    }
+
+    private suspend fun pendingConfirmationAmbiguous(argumentsJson: String): McpToolResult {
+        val pending = commandService.listPendingConfirmations(limit = 2)
+        val message = when (pending.size) {
+            0 -> "没有待确认操作可拒绝"
+            else -> "有多个待确认操作，请指定 confirmation_id"
+        }
+        return McpToolResult.failed(
+            message = message,
+            toolName = name,
+            argumentsJson = argumentsJson,
+            errorCode = "confirmation_id_required",
+            risk = McpRiskLevel.Low,
+        )
     }
 }

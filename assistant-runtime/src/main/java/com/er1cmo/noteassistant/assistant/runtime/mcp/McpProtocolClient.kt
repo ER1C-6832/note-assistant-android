@@ -123,7 +123,7 @@ class McpProtocolClient @Inject constructor(
             method = method,
             toolName = result.toolName,
             status = result.statusEnum,
-            blocked = result.statusEnum != McpToolStatus.Success,
+            blocked = result.statusEnum.isBlockingFailure(),
             message = result.message,
             responseJson = McpResultMapper.toolsCallResponse(call.requestIdJson, result),
         )
@@ -145,8 +145,7 @@ class McpProtocolClient @Inject constructor(
                     .put("protocolVersion", "2024-11-05")
                     .put(
                         "capabilities",
-                        JSONObject()
-                            .put("tools", JSONObject().put("listChanged", false)),
+                        JSONObject().put("tools", JSONObject().put("listChanged", false)),
                     )
                     .put(
                         "serverInfo",
@@ -169,6 +168,15 @@ class McpProtocolClient @Inject constructor(
 
 private fun McpToolResult.withToolNameIfMissing(toolName: String): McpToolResult {
     return if (this.toolName.isNullOrBlank()) copy(toolName = toolName) else this
+}
+
+private fun McpToolStatus.isBlockingFailure(): Boolean = when (this) {
+    McpToolStatus.Failed,
+    McpToolStatus.Blocked,
+    McpToolStatus.NotImplemented -> true
+    McpToolStatus.Success,
+    McpToolStatus.RequiresConfirmation,
+    McpToolStatus.PartialSuccess -> false
 }
 
 private class CompositeMcpToolExecutor(
