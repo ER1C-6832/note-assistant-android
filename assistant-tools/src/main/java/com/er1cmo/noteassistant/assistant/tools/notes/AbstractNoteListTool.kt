@@ -7,10 +7,8 @@ import com.er1cmo.noteassistant.assistant.mcpbase.McpToolDescriptor
 import com.er1cmo.noteassistant.assistant.mcpbase.McpToolResult
 import com.er1cmo.noteassistant.assistant.mcpbase.ToolArgumentParser
 import com.er1cmo.noteassistant.notes.domain.model.Note
-import com.er1cmo.noteassistant.notes.domain.model.NoteType
 import com.er1cmo.noteassistant.notes.domain.usecase.NoteUseCases
 import kotlinx.coroutines.flow.first
-import org.json.JSONArray
 import org.json.JSONObject
 
 abstract class AbstractNoteListTool(
@@ -21,7 +19,8 @@ abstract class AbstractNoteListTool(
     abstract suspend fun loadNotes(): List<Note>
 
     override val riskLevel: McpRiskLevel = McpRiskLevel.Low
-    override val description: String get() = title
+    override val description: String
+        get() = "$title。结果会返回用户可见标题、正文内容、标签和状态；note_id 仅是内部 ID，语音里不要把用户说的数字直接当 note_id。"
     override val descriptor: McpToolDescriptor get() = McpToolDescriptor(
         name = name,
         description = description,
@@ -47,13 +46,16 @@ abstract class AbstractNoteListTool(
             return McpToolResult.invalidJson(name, argumentsJson, "参数不是有效 JSON：${error.message ?: "解析失败"}")
         }
         val limit = parser.int("limit", 20).coerceIn(1, 100)
-        val notes = loadNotes().sortedWith(compareByDescending<Note> { it.updatedAt }.thenByDescending { it.id }).take(limit)
+        val notes = loadNotes()
+            .sortedWith(compareByDescending<Note> { it.updatedAt }.thenByDescending { it.id })
+            .take(limit)
         return McpToolResult.success(
             message = "已列出 ${notes.size} 条便签",
             resultJson = JSONObject()
                 .put("kind", listKind)
                 .put("count", notes.size)
-                .put("results", notes.toJsonArray())
+                .putAssistantNoteReferenceRule()
+                .put("results", notes.toAssistantNoteResultsJsonArray())
                 .toString(),
             toolName = name,
             risk = McpRiskLevel.Low,
@@ -64,22 +66,4 @@ abstract class AbstractNoteListTool(
     protected suspend fun activeNotes(): List<Note> = noteUseCases.listNotes().first()
     protected suspend fun archivedNotes(): List<Note> = noteUseCases.listArchivedNotes().first()
     protected suspend fun deletedNotes(): List<Note> = noteUseCases.listDeletedNotes().first()
-
-    private fun List<Note>.toJsonArray(): JSONArray = JSONArray().also { array ->
-        forEach { note ->
-            array.put(
-                JSONObject()
-                    .put("note_id", note.id)
-                    .put("title", note.title)
-                    .put("snippet", note.content.take(80))
-                    .put("tags", JSONArray(note.tags.map { it.name }))
-                    .put("type", if (note.type == NoteType.Todo) "todo" else "normal")
-                    .put("done", note.isDone)
-                    .put("pinned", note.pinned)
-                    .put("archived", note.archived)
-                    .put("deleted", note.deleted)
-                    .put("updated_at", note.updatedAt),
-            )
-        }
-    }
 }

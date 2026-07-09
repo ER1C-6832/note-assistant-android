@@ -6,18 +6,15 @@ import com.er1cmo.noteassistant.assistant.mcpbase.McpToolContext
 import com.er1cmo.noteassistant.assistant.mcpbase.McpToolDescriptor
 import com.er1cmo.noteassistant.assistant.mcpbase.McpToolResult
 import com.er1cmo.noteassistant.assistant.mcpbase.ToolArgumentParser
-import com.er1cmo.noteassistant.notes.domain.model.Note
-import com.er1cmo.noteassistant.notes.domain.model.NoteType
 import com.er1cmo.noteassistant.notes.domain.usecase.NoteUseCases
 import javax.inject.Inject
-import org.json.JSONArray
 import org.json.JSONObject
 
 class NotesGetTool @Inject constructor(
     private val noteUseCases: NoteUseCases,
 ) : McpTool {
     override val name: String = "notes.get"
-    override val description: String = "按 note_id 读取一条便签的完整字段。"
+    override val description: String = "按 note_id 读取一条便签的完整字段。note_id 应来自 search/list/get 的工具结果，不应从用户口述数字猜测。"
     override val riskLevel: McpRiskLevel = McpRiskLevel.Low
     override val descriptor: McpToolDescriptor = McpToolDescriptor(
         name = name,
@@ -36,7 +33,7 @@ class NotesGetTool @Inject constructor(
         riskLevel = McpRiskLevel.Low,
         mutates = false,
         confirmation = McpToolDescriptor.CONFIRMATION_NOT_REQUIRED,
-        examples = listOf("读取 note_id=123 的便签"),
+        examples = listOf("读取 search/list 结果里的 note_id=123 的便签"),
     )
 
     override suspend fun call(argumentsJson: String): McpToolResult = call(argumentsJson, McpToolContext())
@@ -78,29 +75,13 @@ class NotesGetTool @Inject constructor(
         }
         return McpToolResult.success(
             message = "已读取便签：${note.title.ifBlank { "未命名便签" }}",
-            resultJson = note.toToolResultJson().toString(),
+            resultJson = JSONObject()
+                .putAssistantNoteReferenceRule()
+                .put("note", note.toAssistantNoteResultJson())
+                .toString(),
             toolName = name,
             risk = McpRiskLevel.Low,
             affectedNoteIds = listOf(note.id),
         )
-    }
-
-    private fun Note.toToolResultJson(): JSONObject = JSONObject()
-        .put("note_id", id)
-        .put("title", title)
-        .put("content", content)
-        .put("type", type.storageValue())
-        .put("done", isDone)
-        .put("pinned", pinned)
-        .put("archived", archived)
-        .put("deleted", deleted)
-        .put("color", color ?: JSONObject.NULL)
-        .put("created_at", createdAt)
-        .put("updated_at", updatedAt)
-        .put("tags", JSONArray(tags.map { it.name }))
-
-    private fun NoteType.storageValue(): String = when (this) {
-        NoteType.Normal -> "normal"
-        NoteType.Todo -> "todo"
     }
 }

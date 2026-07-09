@@ -7,18 +7,17 @@ import com.er1cmo.noteassistant.assistant.mcpbase.McpToolDescriptor
 import com.er1cmo.noteassistant.assistant.mcpbase.McpToolResult
 import com.er1cmo.noteassistant.assistant.mcpbase.ToolArgumentParser
 import com.er1cmo.noteassistant.notes.domain.model.Note
-import com.er1cmo.noteassistant.notes.domain.model.NoteType
 import com.er1cmo.noteassistant.notes.domain.usecase.NoteUseCases
 import javax.inject.Inject
 import kotlinx.coroutines.flow.first
-import org.json.JSONArray
 import org.json.JSONObject
 
 class NotesListPinnedTool @Inject constructor(
     private val noteUseCases: NoteUseCases,
 ) : McpTool {
     override val name: String = "notes.list_pinned"
-    override val description: String = "列出置顶便签，用于语音查询当前固定的重要便签。"
+    override val description: String =
+        "列出置顶便签，用于语音查询当前固定的重要便签。结果会返回标题、正文内容、标签和状态。"
     override val riskLevel: McpRiskLevel = McpRiskLevel.Low
     override val descriptor: McpToolDescriptor = McpToolDescriptor(
         name = name,
@@ -62,7 +61,8 @@ class NotesListPinnedTool @Inject constructor(
         val resultJson = JSONObject()
             .put("kind", "pinned")
             .put("count", notes.size)
-            .put("results", notes.toJsonArray())
+            .putAssistantNoteReferenceRule()
+            .put("results", notes.toAssistantNoteResultsJsonArray())
             .toString()
         return McpToolResult.success(
             message = "已列出 ${notes.size} 条置顶便签",
@@ -71,23 +71,5 @@ class NotesListPinnedTool @Inject constructor(
             risk = McpRiskLevel.Low,
             affectedNoteIds = notes.map { it.id },
         )
-    }
-
-    private fun List<Note>.toJsonArray(): JSONArray = JSONArray().also { array ->
-        forEach { note ->
-            array.put(
-                JSONObject()
-                    .put("note_id", note.id)
-                    .put("title", note.title)
-                    .put("snippet", note.content.take(80))
-                    .put("tags", JSONArray(note.tags.map { it.name }))
-                    .put("type", if (note.type == NoteType.Todo) "todo" else "normal")
-                    .put("done", note.isDone)
-                    .put("pinned", note.pinned)
-                    .put("archived", note.archived)
-                    .put("deleted", note.deleted)
-                    .put("updated_at", note.updatedAt),
-            )
-        }
     }
 }
