@@ -18,7 +18,7 @@ class NotesSearchTool @Inject constructor(
 ) : McpTool {
     override val name: String = "notes.search"
     override val description: String =
-        "搜索本地便签。语音入口默认搜索 active、archived、deleted 三类并返回完整内容，便于用用户可见标题定位，而不是猜 note_id。"
+        "搜索本地便签并返回完整候选。默认搜索 active、archived、deleted。像“王总相关便签”会自动清理为“王总”再搜。不要反复调用 search/list_recent；没结果就用 notes.resolve 或要求用户澄清。"
     override val riskLevel: McpRiskLevel = McpRiskLevel.Low
     override val descriptor: McpToolDescriptor = McpToolDescriptor(
         name = name,
@@ -47,8 +47,8 @@ class NotesSearchTool @Inject constructor(
         mutates = false,
         confirmation = McpToolDescriptor.CONFIRMATION_NOT_REQUIRED,
         examples = listOf(
+            "查找王总相关便签：{\"query\":\"王总相关便签\",\"scope\":\"all\"}",
             "按用户可见标题搜索：{\"exact_title\":\"1\"}",
-            "按关键词搜索：{\"query\":\"客户\"}",
             "同时搜索最近删除：{\"query\":\"1\",\"scope\":\"all\"}",
         ),
     )
@@ -81,17 +81,20 @@ class NotesSearchTool @Inject constructor(
             includeArchived = includeArchived,
             includeDeleted = includeDeleted,
         )
-        val typedPool = pool.filterByType(parser.optionalString("type", ""))
-        val taggedPool = typedPool.filterByTags(parser.stringList("tags"))
-        val filteredPool = taggedPool.filterDone(parser)
+        val filteredPool = pool
+            .filterByType(parser.optionalString("type", ""))
+            .filterByTags(parser.stringList("tags"))
+            .filterDone(parser)
 
         val searchOutcome = when {
             exactTitle.isNotBlank() -> searchExactTitle(filteredPool, exactTitle, query, limit)
-            query.isNotBlank() -> searchQuery(filteredPool, query, limit)
+            query.isNotBlank() -> searchQueryWithIntentFallback(filteredPool, query, limit)
             else -> SearchOutcome(
                 strategy = "recent_all_in_scope",
+                normalizedQuery = "",
                 totalMatches = filteredPool.size,
                 notes = filteredPool.sortedByRecent().take(limit),
+                resultIsLimited = filteredPool.size > limit,
                 scores = emptyMap(),
                 matchedFields = emptyMap(),
             )
@@ -106,18 +109,16 @@ class NotesSearchTool @Inject constructor(
             result.put("exact_title", exactTitle)
         }
         val resultJson = result
+            .put("normalized_query", searchOutcome.normalizedQuery)
             .put("scope", scope)
             .put("include_archived", includeArchived)
             .put("include_deleted", includeDeleted)
             .put("match_strategy", searchOutcome.strategy)
             .put("count", searchOutcome.notes.size)
             .put("total_matching_count", searchOutcome.totalMatches)
-            .put("result_is_limited", searchOutcome.totalMatches > searchOutcome.notes.size)
+            .put("result_is_limited", searchOutcome.resultIsLimited)
             .put("results", searchOutcome.notes.toAssistantNoteResultsJsonArrayWithSearchMeta(searchOutcome))
-            .put(
-                "assistant_next_step_hint",
-                "Use note_ref or exact_title for user-visible references. Use note_id only if it came from this result item.",
-            )
+            .put("assistant_next_step_hint", assistantNextStepHint(searchOutcome))
             .toString()
         return McpToolResult.success(
             message = "搜索完成，找到 ${searchOutcome.totalMatches} 条便签，返回 ${searchOutcome.notes.size} 条",
@@ -146,49 +147,71 @@ class NotesSearchTool @Inject constructor(
         fallbackQuery: String,
         limit: Int,
     ): SearchOutcome {
-        val normalized = exactTitle.visibleNormalize()
-        val exactMatches = notes.filter { it.title.visibleNormalize() == normalized }
+        val normalized = exactTitle.visibleTitleNormalize()
+        val exactMatches = notes.filter { it.title.visibleTitleNormalize() == normalized }
             .sortedByRecent()
         if (exactMatches.isNotEmpty()) {
             return SearchOutcome(
                 strategy = "exact_title",
+                normalizedQuery = exactTitle,
                 totalMatches = exactMatches.size,
                 notes = exactMatches.take(limit),
+                resultIsLimited = exactMatches.size > limit,
                 scores = exactMatches.associate { it.id to 1200 },
                 matchedFields = exactMatches.associate { it.id to listOf("title_exact") },
             )
         }
-        val containsMatches = notes.filter { it.title.visibleNormalize().contains(normalized) }
+        val containsMatches = notes.filter { it.title.visibleTitleNormalize().contains(normalized) }
             .sortedByRecent()
         if (containsMatches.isNotEmpty()) {
             return SearchOutcome(
                 strategy = "title_contains_after_exact_miss",
+                normalizedQuery = exactTitle,
                 totalMatches = containsMatches.size,
                 notes = containsMatches.take(limit),
+                resultIsLimited = containsMatches.size > limit,
                 scores = containsMatches.associate { it.id to 950 },
                 matchedFields = containsMatches.associate { it.id to listOf("title_contains") },
             )
         }
-        return searchQuery(notes, fallbackQuery.ifBlank { exactTitle }, limit)
+        return searchQueryWithIntentFallback(notes, fallbackQuery.ifBlank { exactTitle }, limit)
             .copy(strategy = "full_text_after_exact_title_miss")
     }
 
-    private fun searchQuery(notes: List<Note>, query: String, limit: Int): SearchOutcome {
-        val results = noteUseCases.searchNotes(notes = notes, query = query, limit = 0)
+    private fun searchQueryWithIntentFallback(notes: List<Note>, query: String, limit: Int): SearchOutcome {
+        val terms = query.toAssistantSearchTerms().ifEmpty { listOf(query.cleanVoiceReference()) }
+        terms.forEachIndexed { index, term ->
+            val results = noteUseCases.searchNotes(notes = notes, query = term, limit = 0)
+            if (results.isNotEmpty()) {
+                return SearchOutcome(
+                    strategy = if (index == 0) "full_text" else "full_text_intent_cleaned",
+                    normalizedQuery = term,
+                    totalMatches = results.size,
+                    notes = results.map { it.note }.distinctBy { it.id }.take(limit),
+                    resultIsLimited = results.size > limit,
+                    scores = results.associate { it.note.id to it.score },
+                    matchedFields = results.associate { result -> result.note.id to result.matchedFields.map { it.name.lowercase() } },
+                )
+            }
+        }
         return SearchOutcome(
-            strategy = "full_text",
-            totalMatches = results.size,
-            notes = results.map { it.note }.take(limit),
-            scores = results.associate { it.note.id to it.score },
-            matchedFields = results.associate { result -> result.note.id to result.matchedFields.map { it.name.lowercase() } },
+            strategy = "no_match",
+            normalizedQuery = terms.firstOrNull().orEmpty(),
+            totalMatches = 0,
+            notes = emptyList(),
+            resultIsLimited = false,
+            scores = emptyMap(),
+            matchedFields = emptyMap(),
         )
     }
 }
 
 private data class SearchOutcome(
     val strategy: String,
+    val normalizedQuery: String,
     val totalMatches: Int,
     val notes: List<Note>,
+    val resultIsLimited: Boolean,
     val scores: Map<Long, Int>,
     val matchedFields: Map<Long, List<String>>,
 )
@@ -200,7 +223,7 @@ private fun JSONObject.searchReference(): String {
         optString("note_title", ""),
         optString("title", ""),
         optString("exact_title", ""),
-    ).firstOrNull { it.isNotBlank() }?.cleanUserReference().orEmpty()
+    ).firstOrNull { it.isNotBlank() }?.cleanVoiceReference().orEmpty()
 }
 
 private fun JSONObject.exactTitleReference(): String {
@@ -208,8 +231,7 @@ private fun JSONObject.exactTitleReference(): String {
         optString("exact_title", ""),
         optString("note_title", ""),
         optString("title", ""),
-        optString("note_ref", ""),
-    ).firstOrNull { it.isNotBlank() }?.cleanUserReference().orEmpty()
+    ).firstOrNull { it.isNotBlank() }?.cleanVoiceReference().orEmpty()
 }
 
 private fun JSONObject.optionalBooleanByScope(explicitName: String, defaultValue: Boolean): Boolean {
@@ -249,9 +271,9 @@ private fun List<Note>.toAssistantNoteResultsJsonArrayWithSearchMeta(outcome: Se
     }
 }
 
-private fun String.visibleNormalize(): String = cleanUserReference().lowercase().replace(Regex("\\s+"), "")
-
-private fun String.cleanUserReference(): String = trim()
-    .trim('"')
-    .trim('\'')
-    .trim()
+private fun assistantNextStepHint(outcome: SearchOutcome): String = when {
+    outcome.totalMatches == 0 -> "No matching note was found. Do not loop search/list tools. Ask the user for a more specific visible title or keyword."
+    outcome.resultIsLimited -> "Results are limited. Ask the user to narrow the title/query before mutation."
+    outcome.notes.size == 1 -> "One note matched. For mutation tools, pass note_ref/title from this result or the note_id from this exact result."
+    else -> "Multiple notes matched. If the user asked for all related notes, call notes.delete with query and allow_multiple=true so the app can show a confirmation preview. Otherwise ask the user to clarify."
+}

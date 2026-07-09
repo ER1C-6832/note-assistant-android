@@ -18,9 +18,11 @@ import org.json.JSONObject
 class NotesDeleteTool @Inject constructor(
     private val commandService: NoteCommandService,
     private val noteUseCases: NoteUseCases,
+    private val resolver: NoteReferenceResolver,
 ) : McpTool {
     override val name: String = "notes.delete"
-    override val description: String = "软删除一个或多个便签。高风险，必须先返回确认请求。语音场景应优先使用 note_ref/note_title 等用户可见标题，不要把用户说的数字直接当内部 note_id。"
+    override val description: String =
+        "软删除便签。支持 query/note_ref/title 这类用户可见引用，会在工具内解析候选并返回 App 确认，不要反复先 search/list。用户说“王总相关便签”时用 query=王总相关便签、allow_multiple=true。"
     override val riskLevel: McpRiskLevel = McpRiskLevel.High
     override val descriptor: McpToolDescriptor = McpToolDescriptor(
         name = name,
@@ -29,12 +31,16 @@ class NotesDeleteTool @Inject constructor(
             {
               "type": "object",
               "properties": {
-                "note_ref": { "type": "string", "description": "用户可见的便签标题或标题关键词，推荐语音入口使用" },
-                "note_title": { "type": "string", "description": "用户可见的便签标题" },
+                "query": { "type": "string", "description": "用户可见关键词或相关内容，例如 王总相关便签。会搜索标题、正文、标签。" },
+                "note_ref": { "type": "string", "description": "用户可见标题或标题关键词" },
+                "note_title": { "type": "string", "description": "用户可见标题" },
                 "title": { "type": "string", "description": "用户可见标题，兼容字段" },
-                "query": { "type": "string", "description": "标题关键词，必须唯一匹配" },
-                "note_id": { "type": "integer", "description": "内部便签 ID，仅当用户明确看到并提供 ID 时使用" },
+                "exact_title": { "type": "string", "description": "精确标题" },
+                "note_id": { "type": "integer", "description": "内部便签 ID，仅当来自工具返回结果时使用" },
                 "note_ids": { "type": "array", "items": { "type": "integer" } },
+                "allow_multiple": { "type": "boolean", "description": "用户明确说相关/全部/这些时设为 true，匹配多条会进入确认预览" },
+                "scope": { "type": "string", "enum": ["active", "archived", "active_archived"] },
+                "max_matches": { "type": "integer", "minimum": 1, "maximum": 20 },
                 "force_note_id": { "type": "boolean", "description": "为 true 时强制把 note_id 当内部 ID" },
                 "id_is_internal": { "type": "boolean", "description": "为 true 时强制把 note_id 当内部 ID" }
               },
@@ -45,9 +51,9 @@ class NotesDeleteTool @Inject constructor(
         mutates = true,
         confirmation = McpToolDescriptor.CONFIRMATION_REQUIRED,
         examples = listOf(
-            "删除标题为 1 的便签：{\"note_ref\":\"1\"}",
-            "删除刚才搜索结果里标题为 客户 的便签：{\"note_title\":\"客户\"}",
-            "只有系统明确知道内部 ID 时才使用：{\"note_id\":123,\"force_note_id\":true}",
+            "删除王总相关便签：{\"query\":\"王总相关便签\",\"allow_multiple\":true}",
+            "删除标题为 1 的便签：{\"exact_title\":\"1\"}",
+            "删除刚才工具结果里的具体 note_id：{\"note_id\":123,\"force_note_id\":true}",
         ),
     )
 
@@ -82,64 +88,116 @@ class NotesDeleteTool @Inject constructor(
             )
         }
 
-        val explicitRef = args.userVisibleReference()
-        if (explicitRef.isNotBlank()) {
-            return resolveByUserVisibleReference(args, explicitRef, argumentsJson)
+        val explicitReference = args.userVisibleReference()
+        val hasUserVisibleReference = explicitReference.isNotBlank()
+        if (hasUserVisibleReference) {
+            return resolveByReference(args, explicitReference, argumentsJson)
         }
 
         if (shouldTreatVoiceNumericIdAsTitle(args, context)) {
             val numericRef = args.optLong("note_id", 0L).toString()
-            val titleMatches = visibleDeleteCandidates().filter { it.title.trim() == numericRef }
-            if (titleMatches.size == 1) {
-                return PreparedDeleteArguments.Ready(rewriteForResolvedNotes(args, titleMatches, numericRef, "voice_numeric_title"))
-            }
-            if (titleMatches.size > 1) {
-                return PreparedDeleteArguments.Failed(ambiguousReferenceResult(numericRef, titleMatches))
-            }
+            val resolved = resolver.resolve(
+                NoteResolveRequest(
+                    query = numericRef,
+                    exactTitle = numericRef,
+                    scope = NoteResolveScope.ActiveAndArchived,
+                    limit = args.optInt("max_matches", 20).coerceIn(1, 20),
+                ),
+            )
+            if (resolved.matches.isNotEmpty()) return rewriteResolvedOrFail(args, resolved, numericRef, argumentsJson)
         }
 
-        return PreparedDeleteArguments.Ready(args.toString())
-    }
-
-    private suspend fun resolveByUserVisibleReference(
-        args: JSONObject,
-        ref: String,
-        originalArgumentsJson: String,
-    ): PreparedDeleteArguments {
-        val candidates = visibleDeleteCandidates()
-        val exactMatches = candidates.filter { it.title.equals(ref, ignoreCase = true) }
-        if (exactMatches.size == 1) {
-            return PreparedDeleteArguments.Ready(rewriteForResolvedNotes(args, exactMatches, ref, "title_exact"))
-        }
-        if (exactMatches.size > 1) {
-            return PreparedDeleteArguments.Failed(ambiguousReferenceResult(ref, exactMatches))
-        }
-
-        val titleContainsMatches = candidates.filter { it.title.contains(ref, ignoreCase = true) }
-        if (titleContainsMatches.size == 1) {
-            return PreparedDeleteArguments.Ready(rewriteForResolvedNotes(args, titleContainsMatches, ref, "title_contains"))
-        }
-        if (titleContainsMatches.size > 1) {
-            return PreparedDeleteArguments.Failed(ambiguousReferenceResult(ref, titleContainsMatches))
-        }
+        val noteIds = args.noteIds()
+        if (noteIds.isNotEmpty()) return PreparedDeleteArguments.Ready(args.toString())
 
         return PreparedDeleteArguments.Failed(
             McpToolResult.failed(
-                message = "没有找到标题匹配“$ref”的便签。请先搜索或说出更完整的标题。",
+                message = "缺少可删除目标。请提供 query、note_ref、title、exact_title，或来自工具结果的 note_id。",
                 toolName = name,
-                argumentsJson = originalArgumentsJson,
-                errorCode = "note_reference_not_found",
+                argumentsJson = argumentsJson,
+                errorCode = "missing_note_reference",
                 risk = McpRiskLevel.High,
             ),
         )
     }
 
-    private suspend fun visibleDeleteCandidates(): List<Note> {
-        return buildList {
-            addAll(noteUseCases.listNotes().first())
-            addAll(noteUseCases.listArchivedNotes().first())
-        }.filter { !it.deleted }
-            .distinctBy { it.id }
+    private suspend fun resolveByReference(
+        args: JSONObject,
+        reference: String,
+        originalArgumentsJson: String,
+    ): PreparedDeleteArguments {
+        val scope = args.optString("scope", "active_archived").toNoteResolveScope(defaultScope = NoteResolveScope.ActiveAndArchived)
+        val boundedScope = when (scope) {
+            NoteResolveScope.Deleted -> NoteResolveScope.ActiveAndArchived
+            NoteResolveScope.All -> NoteResolveScope.ActiveAndArchived
+            else -> scope
+        }
+        val exactTitle = args.exactTitleReference()
+        val result = resolver.resolve(
+            NoteResolveRequest(
+                query = reference,
+                exactTitle = exactTitle,
+                scope = boundedScope,
+                limit = args.optInt("max_matches", 20).coerceIn(1, 20),
+            ),
+        )
+        if (result.matches.isNotEmpty()) return rewriteResolvedOrFail(args, result, reference, originalArgumentsJson)
+
+        val deletedResult = resolver.resolve(
+            NoteResolveRequest(
+                query = reference,
+                exactTitle = exactTitle,
+                scope = NoteResolveScope.Deleted,
+                limit = 5,
+            ),
+        )
+        if (deletedResult.matches.isNotEmpty()) {
+            return PreparedDeleteArguments.Failed(
+                McpToolResult.failed(
+                    message = "找到 ${deletedResult.totalMatches} 条匹配“$reference”的便签，但它们已经在最近删除中，不需要重复删除。",
+                    toolName = name,
+                    argumentsJson = originalArgumentsJson,
+                    errorCode = "already_deleted",
+                    risk = McpRiskLevel.High,
+                ).copy(resultJson = deletedResult.toJson(kind = "already_deleted_matches").toString()),
+            )
+        }
+
+        return PreparedDeleteArguments.Failed(
+            McpToolResult.failed(
+                message = "没有找到可删除的“$reference”。不要反复 search/list，请让用户换一个更具体标题或关键词。",
+                toolName = name,
+                argumentsJson = originalArgumentsJson,
+                errorCode = "note_reference_not_found",
+                risk = McpRiskLevel.High,
+            ).copy(resultJson = result.toJson(kind = "delete_resolution_no_match").toString()),
+        )
+    }
+
+    private fun rewriteResolvedOrFail(
+        args: JSONObject,
+        result: NoteResolveResult,
+        ref: String,
+        originalArgumentsJson: String,
+    ): PreparedDeleteArguments {
+        val allowMultiple = args.allowMultipleByIntent(ref)
+        if (result.resultIsLimited) {
+            return PreparedDeleteArguments.Failed(
+                McpToolResult.failed(
+                    message = "匹配“$ref”的便签超过 ${result.matches.size} 条，请先缩小关键词后再删除。",
+                    toolName = name,
+                    argumentsJson = originalArgumentsJson,
+                    errorCode = "too_many_note_matches",
+                    risk = McpRiskLevel.High,
+                ).copy(resultJson = result.toJson(kind = "delete_resolution_limited").toString()),
+            )
+        }
+        if (result.matches.size > 1 && !allowMultiple) {
+            return PreparedDeleteArguments.Failed(
+                ambiguousReferenceResult(ref, result),
+            )
+        }
+        return PreparedDeleteArguments.Ready(rewriteForResolvedNotes(args, result.matches, ref, result.strategy))
     }
 
     private fun shouldTreatVoiceNumericIdAsTitle(args: JSONObject, context: McpToolContext): Boolean {
@@ -159,36 +217,31 @@ class NotesDeleteTool @Inject constructor(
         val rewritten = JSONObject(args.toString())
         rewritten.remove("note_id")
         rewritten.remove("note_ids")
+        rewritten.remove("query")
+        rewritten.remove("note_ref")
+        rewritten.remove("note_title")
+        rewritten.remove("title")
+        rewritten.remove("exact_title")
+        rewritten.remove("force_note_id")
+        rewritten.remove("id_is_internal")
         rewritten.put("note_ids", JSONArray(notes.map { it.id }))
         rewritten.put("resolved_note_ref", ref)
         rewritten.put("resolved_by", resolvedBy)
-        rewritten.put(
-            "resolved_notes",
-            JSONArray().also { array ->
-                notes.forEach { note ->
-                    array.put(
-                        JSONObject()
-                            .put("note_id", note.id)
-                            .put("title", note.title),
-                    )
-                }
-            },
-        )
+        rewritten.put("resolved_notes", notes.toAssistantNoteResultsJsonArray())
         return rewritten.toString()
     }
 
-    private fun ambiguousReferenceResult(ref: String, matches: List<Note>): McpToolResult {
-        val preview = matches.take(5).joinToString(separator = "；") { note -> "${note.id}:${note.title.ifBlank { "未命名" }}" }
+    private fun ambiguousReferenceResult(ref: String, result: NoteResolveResult): McpToolResult {
         return McpToolResult.failed(
-            message = "找到 ${matches.size} 条标题匹配“$ref”的便签，请说得更具体。候选：$preview",
+            message = "找到 ${result.totalMatches} 条匹配“$ref”的便签。若要全部删除，请明确说“删除所有相关便签”；否则请说更具体标题。",
             toolName = name,
             argumentsJson = JSONObject()
-                .put("note_ref", ref)
-                .put("candidate_count", matches.size)
+                .put("query", ref)
+                .put("candidate_count", result.totalMatches)
                 .toString(),
             errorCode = "ambiguous_note_reference",
             risk = McpRiskLevel.High,
-        )
+        ).copy(resultJson = result.toJson(kind = "delete_resolution_ambiguous").toString())
     }
 }
 
@@ -199,16 +252,43 @@ private sealed interface PreparedDeleteArguments {
 
 private fun JSONObject.userVisibleReference(): String {
     return listOf(
+        optString("query", ""),
         optString("note_ref", ""),
         optString("note_title", ""),
         optString("title", ""),
-        optString("query", ""),
+        optString("exact_title", ""),
     ).firstOrNull { it.isNotBlank() }
-        ?.cleanUserReference()
+        ?.cleanVoiceReference()
         .orEmpty()
 }
 
-private fun String.cleanUserReference(): String = trim()
-    .trim('"')
-    .trim('\'')
-    .trim()
+private fun JSONObject.exactTitleReference(): String {
+    return listOf(
+        optString("exact_title", ""),
+        optString("note_title", ""),
+        optString("title", ""),
+    ).firstOrNull { it.isNotBlank() }
+        ?.cleanVoiceReference()
+        .orEmpty()
+}
+
+private fun JSONObject.noteIds(): List<Long> {
+    val array = optJSONArray("note_ids")
+    if (array != null) {
+        return buildList {
+            for (index in 0 until array.length()) {
+                val id = array.optLong(index, 0L)
+                if (id > 0L) add(id)
+            }
+        }.distinct()
+    }
+    val id = optLong("note_id", 0L)
+    return if (id > 0L) listOf(id) else emptyList()
+}
+
+private fun JSONObject.allowMultipleByIntent(ref: String): Boolean {
+    if (has("allow_multiple")) return optBoolean("allow_multiple", false)
+    val mode = optString("match_mode", "").lowercase()
+    if (mode == "related" || mode == "all") return true
+    return listOf("相关", "有关", "全部", "所有", "这些", "一批").any { ref.contains(it) }
+}

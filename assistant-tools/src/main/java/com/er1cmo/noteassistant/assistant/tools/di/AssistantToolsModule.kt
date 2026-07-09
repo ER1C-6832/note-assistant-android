@@ -21,6 +21,7 @@ import com.er1cmo.noteassistant.assistant.tools.notes.NotesListRecentTool
 import com.er1cmo.noteassistant.assistant.tools.notes.NotesListTodosTool
 import com.er1cmo.noteassistant.assistant.tools.notes.NotesPinTool
 import com.er1cmo.noteassistant.assistant.tools.notes.NotesReplaceContentTool
+import com.er1cmo.noteassistant.assistant.tools.notes.NotesResolveTool
 import com.er1cmo.noteassistant.assistant.tools.notes.NotesRestoreRevisionTool
 import com.er1cmo.noteassistant.assistant.tools.notes.NotesRestoreTool
 import com.er1cmo.noteassistant.assistant.tools.notes.NotesSearchTool
@@ -53,6 +54,7 @@ abstract class AssistantToolsModule {
     abstract fun bindNoteToolExecutor(registry: NoteToolRegistry): McpToolExecutor
 
     @Binds @IntoSet abstract fun bindNotesSearchTool(tool: NotesSearchTool): McpTool
+    @Binds @IntoSet abstract fun bindNotesResolveTool(tool: NotesResolveTool): McpTool
     @Binds @IntoSet abstract fun bindNotesListRecentTool(tool: NotesListRecentTool): McpTool
     @Binds @IntoSet abstract fun bindNotesGetTool(tool: NotesGetTool): McpTool
     @Binds @IntoSet abstract fun bindNotesCreateTool(tool: NotesCreateTool): McpTool
