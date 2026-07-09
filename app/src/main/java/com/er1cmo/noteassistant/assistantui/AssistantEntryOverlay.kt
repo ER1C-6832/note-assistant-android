@@ -4,12 +4,11 @@ import android.Manifest
 import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -38,17 +37,23 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
@@ -57,6 +62,7 @@ import com.er1cmo.noteassistant.assistant.runtime.controller.AssistantController
 import com.er1cmo.noteassistant.assistant.runtime.state.AssistantActivationStatus
 import com.er1cmo.noteassistant.assistant.runtime.state.AssistantAudioStatus
 import com.er1cmo.noteassistant.assistant.runtime.state.AssistantConnectionStatus
+import com.er1cmo.noteassistant.assistant.runtime.state.AssistantPhase
 import com.er1cmo.noteassistant.assistant.runtime.state.AssistantRuntimeMode
 import com.er1cmo.noteassistant.assistant.runtime.state.AssistantState
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -67,6 +73,11 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlin.math.PI
+import kotlin.math.abs
+import kotlin.math.cos
+import kotlin.math.min
+import kotlin.math.sin
 
 @Composable
 fun AssistantEntryOverlay(
@@ -111,7 +122,7 @@ fun AssistantEntryOverlay(
             )
             Spacer(Modifier.height(10.dp))
         }
-        AssistantAuroraButton(
+        CompactAssistantAuroraButton(
             uiState = uiState,
             onClick = viewModel::toggleExpanded,
         )
@@ -119,25 +130,67 @@ fun AssistantEntryOverlay(
 }
 
 @Composable
-private fun AssistantAuroraButton(
+private fun CompactAssistantAuroraButton(
     uiState: AssistantEntryUiState,
     onClick: () -> Unit,
 ) {
-    val transition = rememberInfiniteTransition(label = "assistant_aurora")
-    val rotation by transition.animateFloat(
-        initialValue = 0f,
-        targetValue = 360f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 5200, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart,
-        ),
-        label = "aurora_rotation",
+    val target = remember(uiState.state) { uiState.state.toAuroraTarget() }
+    val transitionSpec = tween<Float>(durationMillis = 850, easing = FastOutSlowInEasing)
+    val colorTransitionSpec = tween<Color>(durationMillis = 850, easing = FastOutSlowInEasing)
+
+    val globalAlpha by animateFloatAsState(
+        targetValue = target.globalAlpha,
+        animationSpec = transitionSpec,
+        label = "entry_aurora_global_alpha",
     )
-    val borderColor = when {
-        uiState.state.audio == AssistantAudioStatus.Recording -> Color(0xFFFFF176)
-        uiState.state.isConnected -> Color(0xFFB2FF59)
-        uiState.state.assistantEnabled -> Color(0xFF80D8FF)
-        else -> Color.White.copy(alpha = 0.45f)
+    val fluidScale by animateFloatAsState(
+        targetValue = target.fluidScale,
+        animationSpec = transitionSpec,
+        label = "entry_aurora_fluid_scale",
+    )
+    val animationSpeedScale by animateFloatAsState(
+        targetValue = target.animationSpeedScale,
+        animationSpec = transitionSpec,
+        label = "entry_aurora_animation_speed",
+    )
+    val colorBlendRatio by animateFloatAsState(
+        targetValue = target.colorBlendRatio,
+        animationSpec = transitionSpec,
+        label = "entry_aurora_color_blend",
+    )
+    val animatedColorA by animateColorAsState(
+        targetValue = target.colorA,
+        animationSpec = colorTransitionSpec,
+        label = "entry_aurora_color_a",
+    )
+    val animatedColorB by animateColorAsState(
+        targetValue = target.colorB,
+        animationSpec = colorTransitionSpec,
+        label = "entry_aurora_color_b",
+    )
+    val animatedColorC by animateColorAsState(
+        targetValue = target.colorC ?: ColorSunsetAmber,
+        animationSpec = colorTransitionSpec,
+        label = "entry_aurora_color_c",
+    )
+
+    val elapsedSeconds by produceState(initialValue = 0f, target.motion) {
+        val startNanos = withFrameNanos { it }
+        while (true) {
+            withFrameNanos { frameNanos ->
+                value = ((frameNanos - startNanos) / 1_000_000_000f).coerceAtLeast(0f)
+            }
+        }
+    }
+
+    val borderColor = when (target.motion) {
+        AuroraMotion.Disabled -> Color.White.copy(alpha = 0.20f)
+        AuroraMotion.Connecting -> ColorSunsetAmber.copy(alpha = 0.40f)
+        AuroraMotion.Connected -> ColorMistyBlue.copy(alpha = 0.40f)
+        AuroraMotion.Listening -> ColorPeach.copy(alpha = 0.45f)
+        AuroraMotion.Thinking -> ColorLilac.copy(alpha = 0.45f)
+        AuroraMotion.Speaking -> ColorSunsetAmber.copy(alpha = 0.52f)
+        AuroraMotion.Error -> ColorRoseRed.copy(alpha = 0.55f)
     }
 
     Box(
@@ -145,43 +198,105 @@ private fun AssistantAuroraButton(
             .size(74.dp)
             .clip(CircleShape)
             .clickable(onClick = onClick)
-            .border(1.5.dp, borderColor, CircleShape),
+            .background(Color.White.copy(alpha = 0.10f), CircleShape)
+            .border(1.dp, borderColor, CircleShape),
         contentAlignment = Alignment.Center,
     ) {
+        Canvas(modifier = Modifier.size(74.dp)) {
+            val canvasCenter = Offset(size.width / 2f, size.height / 2f)
+            val baseRadius = min(size.width, size.height) * 0.28f
+            val d8 = 8.dp.toPx()
+            val d10 = 10.dp.toPx()
+            val d12 = 12.dp.toPx()
+            val d14 = 14.dp.toPx()
+            val orbitRadius = min(size.width, size.height) * 0.18f
+            val basePhase = elapsedSeconds * TWO_PI / BASE_CYCLE_SECONDS
+            val fluidPhase = basePhase * animationSpeedScale
+            val rotatingAngleRadians = elapsedSeconds * TWO_PI / THINKING_ORBIT_SECONDS
+            val syntheticVolumeScale = when (target.motion) {
+                AuroraMotion.Listening -> (0.18f + 0.82f * abs(sin(elapsedSeconds * 2.7f))).coerceIn(0f, 1f)
+                AuroraMotion.Speaking -> (0.22f + 0.78f * abs(sin(elapsedSeconds * 3.1f + 0.6f))).coerceIn(0f, 1f)
+                else -> 0f
+            }
+            val listeningPerturb = if (target.motion == AuroraMotion.Listening) syntheticVolumeScale * 0.42f else 0f
+            val effectiveFluidScale = if (target.motion == AuroraMotion.Speaking) {
+                fluidScale * (1f + syntheticVolumeScale * 0.14f)
+            } else {
+                fluidScale
+            }
+
+            val colorA = blendAuroraColor(ColorSlateGray, animatedColorA, colorBlendRatio)
+            val colorB = blendAuroraColor(ColorSlateGray.copy(alpha = 0.55f), animatedColorB, colorBlendRatio)
+            val radiusA = baseRadius * effectiveFluidScale *
+                (1.08f + 0.18f * sin(fluidPhase * 1.0f) + listeningPerturb)
+            val radiusB = baseRadius * effectiveFluidScale *
+                (0.98f + 0.14f * cos(fluidPhase * 1.3f) + listeningPerturb)
+
+            val defaultOffsetA = canvasCenter + Offset(
+                x = cos(fluidPhase * 0.80f) * d12,
+                y = sin(fluidPhase * 0.80f) * d8,
+            )
+            val defaultOffsetB = canvasCenter + Offset(
+                x = sin(fluidPhase * 0.90f + 1.35f) * -d10,
+                y = cos(fluidPhase * 0.90f + 1.35f) * d10,
+            )
+            val thinkingOffsetA = canvasCenter + Offset(
+                x = cos(rotatingAngleRadians) * orbitRadius,
+                y = sin(rotatingAngleRadians) * orbitRadius,
+            )
+            val thinkingOffsetB = canvasCenter + Offset(
+                x = cos(rotatingAngleRadians + PI.toFloat()) * orbitRadius,
+                y = sin(rotatingAngleRadians + PI.toFloat()) * orbitRadius,
+            )
+            val centerA = if (target.motion == AuroraMotion.Thinking) thinkingOffsetA else defaultOffsetA
+            val centerB = if (target.motion == AuroraMotion.Thinking) thinkingOffsetB else defaultOffsetB
+
+            drawFeatheredAuroraBlob(
+                color = colorA,
+                center = centerA,
+                radius = radiusA,
+                globalAlpha = globalAlpha,
+            )
+            drawFeatheredAuroraBlob(
+                color = colorB,
+                center = centerB,
+                radius = radiusB,
+                globalAlpha = globalAlpha,
+            )
+
+            if (target.motion == AuroraMotion.Speaking || target.colorC != null) {
+                val radiusC = baseRadius * effectiveFluidScale * (0.68f + syntheticVolumeScale * 0.34f)
+                val centerC = canvasCenter + Offset(
+                    x = sin(fluidPhase * 0.7f) * d8,
+                    y = d12 + syntheticVolumeScale * d14,
+                )
+                drawFeatheredAuroraBlob(
+                    color = animatedColorC,
+                    center = centerC,
+                    radius = radiusC,
+                    globalAlpha = globalAlpha * 0.90f,
+                )
+            }
+        }
+
         Box(
             modifier = Modifier
-                .matchParentSize()
-                .graphicsLayer(rotationZ = rotation)
-                .background(
-                    brush = Brush.sweepGradient(
-                        listOf(
-                            Color(0xFF7C4DFF),
-                            Color(0xFF00E5FF),
-                            Color(0xFFFF4081),
-                            Color(0xFF69F0AE),
-                            Color(0xFF7C4DFF),
-                        ),
-                    ),
-                    shape = CircleShape,
-                ),
-        )
-        Box(
-            modifier = Modifier
-                .size(58.dp)
+                .size(53.dp)
                 .clip(CircleShape)
-                .background(Color.Black.copy(alpha = 0.24f)),
+                .background(Color.Black.copy(alpha = 0.20f)),
             contentAlignment = Alignment.Center,
         ) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(
                     text = "小智",
-                    color = Color.White,
+                    color = Color.White.copy(alpha = 0.78f),
                     style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.Bold,
+                    fontWeight = FontWeight.SemiBold,
+                    letterSpacing = 0.3.sp,
                 )
                 Text(
                     text = uiState.compactStatusLabel,
-                    color = Color.White.copy(alpha = 0.92f),
+                    color = Color.White.copy(alpha = 0.58f),
                     style = MaterialTheme.typography.labelSmall,
                     maxLines = 1,
                 )
@@ -377,11 +492,18 @@ data class AssistantEntryUiState(
     }
     val audioLabel: String = state.audio.storageValue
     val compactStatusLabel: String = when {
-        !state.assistantEnabled -> "off"
-        state.audio == AssistantAudioStatus.Recording -> "listening"
-        state.isConnected -> "online"
-        state.connection == AssistantConnectionStatus.Connecting -> "linking"
-        else -> state.runtimeMode.storageValue
+        !state.assistantEnabled || state.phase == AssistantPhase.Disabled -> "关闭"
+        state.phase == AssistantPhase.Error || state.audio == AssistantAudioStatus.Error -> "异常"
+        state.phase == AssistantPhase.Listening || state.audio == AssistantAudioStatus.Recording -> "聆听"
+        state.phase == AssistantPhase.Speaking || state.audio == AssistantAudioStatus.Playing -> "回复"
+        state.phase == AssistantPhase.Thinking || state.phase == AssistantPhase.UploadingAudio -> "思考"
+        state.phase == AssistantPhase.Activating ||
+            state.phase == AssistantPhase.Connecting ||
+            state.phase == AssistantPhase.Reconnecting ||
+            state.connection == AssistantConnectionStatus.Connecting -> "连接"
+        state.connection == AssistantConnectionStatus.Connected -> "在线"
+        state.runtimeMode == AssistantRuntimeMode.Real -> "Real"
+        else -> "Fake"
     }
     val statusLine: String = buildString {
         append(enabledLabel)
@@ -510,3 +632,171 @@ class AssistantEntryViewModel @Inject constructor(
         }
     }
 }
+
+private fun AssistantState.toAuroraTarget(): AuroraTarget {
+    return when {
+        !assistantEnabled || phase == AssistantPhase.Disabled -> AuroraTarget(
+            globalAlpha = 0.62f,
+            fluidScale = 0.82f,
+            animationSpeedScale = 0.12f,
+            colorBlendRatio = 0f,
+            colorA = ColorSlateGray,
+            colorB = ColorSlateGray.copy(alpha = 0.45f),
+            motion = AuroraMotion.Disabled,
+        )
+        phase == AssistantPhase.Error || audio == AssistantAudioStatus.Error -> AuroraTarget(
+            globalAlpha = 1.0f,
+            fluidScale = 0.92f,
+            animationSpeedScale = 0.46f,
+            colorBlendRatio = 1f,
+            colorA = ColorRoseRed,
+            colorB = ColorSlateGray,
+            motion = AuroraMotion.Error,
+        )
+        phase == AssistantPhase.Listening || audio == AssistantAudioStatus.Recording -> AuroraTarget(
+            globalAlpha = 1.0f,
+            fluidScale = 1.10f,
+            animationSpeedScale = 2.05f,
+            colorBlendRatio = 1f,
+            colorA = ColorPeach,
+            colorB = ColorMistyBlue,
+            motion = AuroraMotion.Listening,
+        )
+        phase == AssistantPhase.Speaking || audio == AssistantAudioStatus.Playing -> AuroraTarget(
+            globalAlpha = 1.0f,
+            fluidScale = 1.0f,
+            animationSpeedScale = 1.18f,
+            colorBlendRatio = 1f,
+            colorA = ColorPeach,
+            colorB = ColorLilac,
+            colorC = ColorSunsetAmber,
+            motion = AuroraMotion.Speaking,
+        )
+        phase == AssistantPhase.Thinking || phase == AssistantPhase.UploadingAudio -> AuroraTarget(
+            globalAlpha = 0.98f,
+            fluidScale = 1.04f,
+            animationSpeedScale = 1.75f,
+            colorBlendRatio = 1f,
+            colorA = ColorMistyBlue,
+            colorB = ColorLilac,
+            motion = AuroraMotion.Thinking,
+        )
+        phase == AssistantPhase.Activating ||
+            phase == AssistantPhase.Connecting ||
+            phase == AssistantPhase.Reconnecting ||
+            connection == AssistantConnectionStatus.Connecting ||
+            activation == AssistantActivationStatus.Activating -> AuroraTarget(
+            globalAlpha = 0.94f,
+            fluidScale = 0.98f,
+            animationSpeedScale = 1.02f,
+            colorBlendRatio = 1f,
+            colorA = ColorMistyBlue,
+            colorB = ColorSunsetAmber.copy(alpha = 0.82f),
+            motion = AuroraMotion.Connecting,
+        )
+        phase == AssistantPhase.Connected || connection == AssistantConnectionStatus.Connected -> AuroraTarget(
+            globalAlpha = 0.96f,
+            fluidScale = 0.98f,
+            animationSpeedScale = 0.50f,
+            colorBlendRatio = 1f,
+            colorA = ColorMistyBlue,
+            colorB = ColorLilac,
+            motion = AuroraMotion.Connected,
+        )
+        else -> AuroraTarget(
+            globalAlpha = 0.78f,
+            fluidScale = 0.88f,
+            animationSpeedScale = 0.18f,
+            colorBlendRatio = 0.35f,
+            colorA = ColorMistyBlue.copy(alpha = 0.72f),
+            colorB = ColorSlateGray.copy(alpha = 0.55f),
+            motion = AuroraMotion.Disabled,
+        )
+    }
+}
+
+private fun DrawScope.drawFeatheredAuroraBlob(
+    color: Color,
+    center: Offset,
+    radius: Float,
+    globalAlpha: Float,
+) {
+    val centerAlpha = auroraCenterAlpha(color) * globalAlpha
+    drawCircle(
+        brush = Brush.radialGradient(
+            colors = listOf(
+                color.copy(alpha = centerAlpha.coerceIn(0f, 1f)),
+                color.copy(alpha = (centerAlpha * 0.48f).coerceIn(0f, 1f)),
+                Color.Transparent,
+            ),
+            center = center,
+            radius = radius,
+        ),
+        radius = radius,
+        center = center,
+        blendMode = BlendMode.SrcOver,
+    )
+}
+
+private fun auroraCenterAlpha(color: Color): Float {
+    return when {
+        color.sameRgb(ColorMistyBlue) -> 0.85f
+        color.sameRgb(ColorLilac) -> 0.80f
+        color.sameRgb(ColorPeach) -> 0.85f
+        color.sameRgb(ColorSlateGray) -> min(color.alpha, 0.75f)
+        color.sameRgb(ColorSunsetAmber) -> 0.80f
+        color.sameRgb(ColorRoseRed) -> 0.90f
+        else -> color.alpha.coerceIn(0.80f, 0.90f)
+    }
+}
+
+private fun Color.sameRgb(other: Color): Boolean {
+    return abs(red - other.red) < 0.002f &&
+        abs(green - other.green) < 0.002f &&
+        abs(blue - other.blue) < 0.002f
+}
+
+private fun blendAuroraColor(
+    from: Color,
+    to: Color,
+    ratio: Float,
+): Color {
+    val t = ratio.coerceIn(0f, 1f)
+    return Color(
+        red = from.red + (to.red - from.red) * t,
+        green = from.green + (to.green - from.green) * t,
+        blue = from.blue + (to.blue - from.blue) * t,
+        alpha = from.alpha + (to.alpha - from.alpha) * t,
+    )
+}
+
+private enum class AuroraMotion {
+    Disabled,
+    Connecting,
+    Connected,
+    Listening,
+    Thinking,
+    Speaking,
+    Error,
+}
+
+private data class AuroraTarget(
+    val globalAlpha: Float,
+    val fluidScale: Float,
+    val animationSpeedScale: Float,
+    val colorBlendRatio: Float,
+    val colorA: Color,
+    val colorB: Color,
+    val colorC: Color? = null,
+    val motion: AuroraMotion,
+)
+
+private val ColorMistyBlue = Color(0xFF3A86FF)
+private val ColorLilac = Color(0xFF8338EC)
+private val ColorPeach = Color(0xFFFF006E)
+private val ColorSlateGray = Color(0xFF475569)
+private val ColorSunsetAmber = Color(0xFFFF9F1C)
+private val ColorRoseRed = Color(0xFFE63946)
+private const val BASE_CYCLE_SECONDS = 6f
+private const val THINKING_ORBIT_SECONDS = 3.5f
+private const val TWO_PI = (2.0 * PI).toFloat()
