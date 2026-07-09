@@ -220,11 +220,11 @@ class SettingsViewModel @Inject constructor(
         assistantTextInput,
         phase4ToolName,
         phase4ArgumentsJson,
-    ) { assistantState, input, toolName, arguments ->
+    ) { assistantState, input, tool, arguments ->
         AssistantPanelState(
             assistantState = assistantState,
             textInput = input,
-            phase4ToolName = toolName,
+            phase4ToolName = tool,
             phase4ArgumentsJson = arguments,
         )
     }
@@ -567,6 +567,7 @@ private fun Phase3RuntimeBox(
         Column(modifier = Modifier.fillMaxWidth().background(Color(0xFFF8FAFC), RoundedCornerShape(16.dp)).padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("Phase4 MCP 工具模拟器", color = Color(0xFF222832), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
             Text("这里走 runtime MCP 链路：Fake runtime -> router -> McpProtocolClient -> McpToolExecutor -> assistant-tools。下面的 Phase2 模拟器不算 Phase4 MCP 验收。", color = Color(0xFF697386), style = MaterialTheme.typography.bodySmall)
+            Text("Gate D 样例已补全：读列表、归档/恢复、清理完成、标签、UI 展示和 pending confirmation。", color = Color(0xFF0F766E), style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
             Row(modifier = Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 phase4McpSamples.forEach { sample ->
                     Surface(onClick = { onPhase4SampleClick(sample) }, shape = RoundedCornerShape(14.dp), color = Color.White, border = BorderStroke(1.dp, Color(0xFFE5E7EB))) {
@@ -723,17 +724,34 @@ private val phase4McpSamples = listOf(
     ToolSample("改标题", "notes.update_title", "{\"note_id\":1,\"title\":\"Phase4 GateB 已改标题\"}"),
     ToolSample("完成", "notes.toggle_done", "{\"note_id\":1,\"done\":true}"),
     ToolSample("置顶", "notes.pin", "{\"note_id\":1,\"pinned\":true}"),
+    ToolSample("归档", "notes.archive", "{\"note_id\":1,\"archived\":true}"),
+    ToolSample("恢复", "notes.restore", "{\"note_id\":1}"),
+    ToolSample("清完成", "notes.clear_done", "{\"include_archived\":false}"),
+    ToolSample("归档列表", "notes.list_archived", "{\"limit\":10}"),
+    ToolSample("删除列表", "notes.list_deleted", "{\"limit\":10}"),
+    ToolSample("待办列表", "notes.list_todos", "{\"include_done\":true,\"limit\":10}"),
+    ToolSample("完成列表", "notes.list_done", "{\"limit\":10}"),
     ToolSample("打开", "ui.open_note", "{\"note_id\":1}"),
-    ToolSample("搜标签", "tags.search", "{\"query\":\"Phase4\",\"limit\":10}"),
+    ToolSample("显示搜索", "ui.show_search", "{\"query\":\"Phase4\"}"),
+    ToolSample("显示列表", "ui.show_note_list", "{}"),
+    ToolSample("显示标签", "ui.show_tag", "{\"tag_name\":\"Phase4\"}"),
+    ToolSample("显示归档", "ui.show_archive", "{}"),
+    ToolSample("显示回收站", "ui.show_trash", "{}"),
+    ToolSample("建标签", "tags.create", "{\"name\":\"GateD\"}"),
+    ToolSample("改标签", "tags.rename", "{\"tag_id\":1,\"name\":\"GateD 已改名\"}"),
+    ToolSample("标签列表", "tags.list", "{\"limit\":50}"),
+    ToolSample("搜标签", "tags.search", "{\"query\":\"GateD\",\"limit\":10}"),
     ToolSample("加标签", "tags.bind", "{\"note_id\":1,\"tags\":[\"语音\",\"GateB\"],\"mode\":\"add\"}"),
-    ToolSample("覆盖正文", "notes.replace_content", "{\"note_id\":1,\"content\":\"这段正文需要确认后才会覆盖原内容\"}"),
-    ToolSample("恢复版本", "notes.restore_revision", "{\"note_id\":1,\"revision_id\":1}"),
+    ToolSample("移标签", "tags.bind", "{\"note_id\":1,\"tags\":[\"语音\"],\"mode\":\"remove\"}"),
     ToolSample("替换标签", "tags.bind", "{\"note_id\":1,\"tags\":[\"替换后\",\"GateC\"],\"mode\":\"replace\"}"),
     ToolSample("删标签", "tags.delete", "{\"tag_id\":1}"),
+    ToolSample("覆盖正文", "notes.replace_content", "{\"note_id\":1,\"content\":\"这段正文需要确认后才会覆盖原内容\"}"),
+    ToolSample("恢复版本", "notes.restore_revision", "{\"note_id\":1,\"revision_id\":1}"),
+    ToolSample("删除", "notes.delete", "{\"note_id\":1}"),
+    ToolSample("列确认", "assistant.list_pending_confirmations", "{\"limit\":10}"),
     ToolSample("显确认", "ui.show_confirmation", "{\"confirmation_id\":\"粘贴 requires_confirmation 返回的 id\",\"title\":\"待确认操作\",\"message\":\"请确认是否执行这个高风险操作。\"}"),
     ToolSample("确认", "assistant.confirm", "{\"confirmation_id\":\"粘贴 requires_confirmation 返回的 id\"}"),
     ToolSample("拒绝", "assistant.reject", "{\"confirmation_id\":\"粘贴 requires_confirmation 返回的 id\"}"),
-    ToolSample("删除", "notes.delete", "{\"note_id\":1}"),
 )
 
 private val toolSamples = listOf(
