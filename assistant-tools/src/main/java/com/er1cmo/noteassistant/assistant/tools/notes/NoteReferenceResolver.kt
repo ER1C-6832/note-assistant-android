@@ -19,6 +19,21 @@ class NoteReferenceResolver @Inject constructor(
             .distinctBy { it.id }
 
         val exactTitle = request.exactTitle.cleanVoiceReference()
+        if (exactTitle.isBlank() && request.query.isBroadNoteListRequest()) {
+            val notes = pool.sortedByRecent()
+            return NoteResolveResult(
+                requestedText = request.query,
+                normalizedText = request.query.toBroadListRemainder(),
+                strategy = "broad_list_intent",
+                totalMatches = notes.size,
+                matches = notes.take(request.limit),
+                resultIsLimited = notes.size > request.limit,
+                scores = notes.associate { it.id to 100 },
+                matchedFields = notes.associate { it.id to listOf("list_scope") },
+                poolSize = pool.size,
+            )
+        }
+
         if (exactTitle.isNotBlank()) {
             val titleResult = resolveTitle(pool, exactTitle, request.limit)
             if (titleResult.matches.isNotEmpty()) return titleResult
@@ -173,7 +188,8 @@ data class NoteResolveResult(
         .put("assistant_next_step_hint", nextStepHint())
 
     fun nextStepHint(): String = when {
-        totalMatches == 0 -> "No matching note was found. Do not loop list_recent/search. Ask the user for a more visible title or a different keyword."
+        totalMatches == 0 -> "No matching note was found. Stop calling list/search tools and ask the user for a more visible title or a different keyword."
+        strategy == "broad_list_intent" -> "The user asked for a list. The results are already returned; summarize them or show the list UI instead of searching again."
         resultIsLimited -> "Too many notes matched. Ask the user to narrow the title or query before any mutation."
         matches.size == 1 -> "Exactly one note matched. For mutation tools, pass note_ref/title from this item or its note_id from this exact result."
         else -> "Multiple notes matched. If the user asked for all related notes, use a high-risk tool with query and allow_multiple=true so the app can show a confirmation preview. Otherwise ask the user to clarify."

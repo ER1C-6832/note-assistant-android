@@ -1,5 +1,7 @@
 package com.er1cmo.noteassistant.assistant.tools.notes
 
+import com.er1cmo.noteassistant.assistant.bridge.UiCommand
+import com.er1cmo.noteassistant.assistant.bridge.UiCommandBus
 import com.er1cmo.noteassistant.assistant.mcpbase.McpRiskLevel
 import com.er1cmo.noteassistant.assistant.mcpbase.McpTool
 import com.er1cmo.noteassistant.assistant.mcpbase.McpToolContext
@@ -10,10 +12,11 @@ import javax.inject.Inject
 
 class NotesResolveTool @Inject constructor(
     private val resolver: NoteReferenceResolver,
+    private val uiCommandBus: UiCommandBus,
 ) : McpTool {
     override val name: String = "notes.resolve"
     override val description: String =
-        "把用户可见的话术解析成便签候选。用于删除、追加、标记完成、打开前定位目标。不要反复调用 list_recent/search；一次 resolve 没结果就要求用户澄清。"
+        "把用户可见的话术解析成便签候选并同步显示候选列表。用于删除、追加、标记完成、打开前定位目标。不要反复调用 list_recent/search；一次 resolve 没结果就要求用户澄清。"
     override val riskLevel: McpRiskLevel = McpRiskLevel.Low
     override val descriptor: McpToolDescriptor = McpToolDescriptor(
         name = name,
@@ -42,6 +45,7 @@ class NotesResolveTool @Inject constructor(
         examples = listOf(
             "解析王总相关便签：{\"query\":\"王总相关便签\",\"scope\":\"all\"}",
             "解析标题为 1 的便签：{\"exact_title\":\"1\"}",
+            "用户说全部便签有哪些：{\"query\":\"全部便签有哪些\",\"scope\":\"active\"}",
         ),
     )
 
@@ -70,13 +74,14 @@ class NotesResolveTool @Inject constructor(
         val request = NoteResolveRequest(
             query = query.ifBlank { exactTitle },
             exactTitle = exactTitle,
-            scope = parser.optionalString("scope", "all").toNoteResolveScope(defaultScope = NoteResolveScope.All),
+            scope = parser.optionalString("scope", defaultResolveScope(query)).toNoteResolveScope(defaultScope = NoteResolveScope.All),
             limit = parser.int("limit", 20).coerceIn(1, 50),
             tags = parser.stringList("tags"),
             type = parser.optionalString("type", ""),
             includeDone = if (raw.has("include_done")) parser.boolean("include_done", true) else null,
         )
         val result = resolver.resolve(request)
+        emitResolveUiCommand(request = request, result = result)
         return McpToolResult.success(
             message = "已解析便签候选：匹配 ${result.totalMatches} 条，返回 ${result.matches.size} 条",
             resultJson = result.toJson(kind = "resolve").toString(),
@@ -84,6 +89,15 @@ class NotesResolveTool @Inject constructor(
             risk = McpRiskLevel.Low,
             affectedNoteIds = result.matches.map { it.id },
         )
+    }
+
+    private fun emitResolveUiCommand(request: NoteResolveRequest, result: NoteResolveResult) {
+        when {
+            request.scope == NoteResolveScope.Archived -> uiCommandBus.emit(UiCommand.ShowArchive)
+            request.scope == NoteResolveScope.Deleted -> uiCommandBus.emit(UiCommand.ShowTrash)
+            result.strategy == "broad_list_intent" -> uiCommandBus.emit(UiCommand.ShowNoteList)
+            result.normalizedText.isNotBlank() -> uiCommandBus.emit(UiCommand.ShowSearch(result.normalizedText))
+        }
     }
 }
 
@@ -103,4 +117,8 @@ private fun org.json.JSONObject.resolveExactTitle(): String {
         optString("note_title", ""),
         optString("title", ""),
     ).firstOrNull { it.isNotBlank() }?.cleanVoiceReference().orEmpty()
+}
+
+private fun defaultResolveScope(query: String): String {
+    return if (query.isBroadNoteListRequest()) "active" else "all"
 }

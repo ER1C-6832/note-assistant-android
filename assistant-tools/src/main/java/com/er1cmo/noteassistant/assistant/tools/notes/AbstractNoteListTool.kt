@@ -1,5 +1,7 @@
 package com.er1cmo.noteassistant.assistant.tools.notes
 
+import com.er1cmo.noteassistant.assistant.bridge.UiCommand
+import com.er1cmo.noteassistant.assistant.bridge.UiCommandBus
 import com.er1cmo.noteassistant.assistant.mcpbase.McpRiskLevel
 import com.er1cmo.noteassistant.assistant.mcpbase.McpTool
 import com.er1cmo.noteassistant.assistant.mcpbase.McpToolContext
@@ -13,13 +15,14 @@ import org.json.JSONObject
 
 abstract class AbstractNoteListTool(
     private val noteUseCases: NoteUseCases,
+    private val uiCommandBus: UiCommandBus? = null,
 ) : McpTool {
     abstract val listKind: String
     abstract val title: String
     abstract suspend fun loadNotes(): List<Note>
 
     override val riskLevel: McpRiskLevel = McpRiskLevel.Low
-    override val description: String get() = "$title。返回完整内容、标题、状态和用户可见 note_ref，避免把用户说的数字误当 note_id。"
+    override val description: String get() = title
     override val descriptor: McpToolDescriptor get() = McpToolDescriptor(
         name = name,
         description = description,
@@ -45,21 +48,19 @@ abstract class AbstractNoteListTool(
             return McpToolResult.invalidJson(name, argumentsJson, "参数不是有效 JSON：${error.message ?: "解析失败"}")
         }
         val limit = parser.int("limit", 20).coerceIn(1, 100)
-        val all = loadNotes().sortedWith(compareByDescending<Note> { it.updatedAt }.thenByDescending { it.id })
-        val notes = all.take(limit)
+        val notes = loadNotes().sortedWith(compareByDescending<Note> { it.updatedAt }.thenByDescending { it.id }).take(limit)
+        buildUiCommand(notes = notes, parser = parser)?.let { command ->
+            uiCommandBus?.emit(command)
+        }
         return McpToolResult.success(
-            message = "已列出 ${notes.size} 条便签；当前范围共有 ${all.size} 条",
+            message = "已列出 ${notes.size} 条便签",
             resultJson = JSONObject()
                 .putAssistantNoteReferenceRule()
                 .put("kind", listKind)
                 .put("count", notes.size)
-                .put("total_matching_count", all.size)
-                .put("result_is_limited", all.size > notes.size)
                 .put("results", notes.toAssistantNoteResultsJsonArray())
-                .put(
-                    "assistant_next_step_hint",
-                    "Use note_ref/title/query for user-visible speech. Use note_id only if it came from this result item.",
-                )
+                .put("ui_effect", uiEffectName())
+                .put("assistant_next_step_hint", nextStepHint(notes))
                 .toString(),
             toolName = name,
             risk = McpRiskLevel.Low,
@@ -70,4 +71,16 @@ abstract class AbstractNoteListTool(
     protected suspend fun activeNotes(): List<Note> = noteUseCases.listNotes().first()
     protected suspend fun archivedNotes(): List<Note> = noteUseCases.listArchivedNotes().first()
     protected suspend fun deletedNotes(): List<Note> = noteUseCases.listDeletedNotes().first()
+
+    protected open fun buildUiCommand(notes: List<Note>, parser: ToolArgumentParser): UiCommand? = null
+
+    protected open fun uiEffectName(): String = "none"
+
+    protected open fun nextStepHint(notes: List<Note>): String {
+        return if (notes.isEmpty()) {
+            "The list result is empty. Do not loop search/list tools; answer that there are no notes in this scope."
+        } else {
+            "The list result and matching UI were updated. Do not call an extra ui.show_* tool unless the user explicitly asks again."
+        }
+    }
 }

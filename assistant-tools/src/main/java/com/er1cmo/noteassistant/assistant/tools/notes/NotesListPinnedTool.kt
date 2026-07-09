@@ -1,5 +1,7 @@
 package com.er1cmo.noteassistant.assistant.tools.notes
 
+import com.er1cmo.noteassistant.assistant.bridge.UiCommand
+import com.er1cmo.noteassistant.assistant.bridge.UiCommandBus
 import com.er1cmo.noteassistant.assistant.mcpbase.McpRiskLevel
 import com.er1cmo.noteassistant.assistant.mcpbase.McpTool
 import com.er1cmo.noteassistant.assistant.mcpbase.McpToolContext
@@ -14,9 +16,10 @@ import org.json.JSONObject
 
 class NotesListPinnedTool @Inject constructor(
     private val noteUseCases: NoteUseCases,
+    private val uiCommandBus: UiCommandBus,
 ) : McpTool {
     override val name: String = "notes.list_pinned"
-    override val description: String = "列出置顶便签，返回完整内容和 note_ref，用于语音查询当前固定的重要便签。"
+    override val description: String = "列出置顶便签，并同步显示置顶列表。"
     override val riskLevel: McpRiskLevel = McpRiskLevel.Low
     override val descriptor: McpToolDescriptor = McpToolDescriptor(
         name = name,
@@ -27,8 +30,7 @@ class NotesListPinnedTool @Inject constructor(
               "properties": {
                 "limit": { "type": "integer" },
                 "include_archived": { "type": "boolean" },
-                "include_deleted": { "type": "boolean" },
-                "scope": { "type": "string", "enum": ["active", "all", "archived", "deleted"] }
+                "include_deleted": { "type": "boolean" }
               },
               "additionalProperties": false
             }
@@ -45,33 +47,30 @@ class NotesListPinnedTool @Inject constructor(
         val parser = ToolArgumentParser.parse(argumentsJson).getOrElse { error ->
             return McpToolResult.invalidJson(name, argumentsJson, "notes.list_pinned 参数不是有效 JSON：${error.message ?: "解析失败"}")
         }
-        val raw = parser.raw()
         val limit = parser.int("limit", 20).coerceIn(1, 100)
-        val scope = parser.optionalString("scope", "active").ifBlank { "active" }.lowercase()
-        val includeArchived = if (raw.has("include_archived")) parser.boolean("include_archived", false) else scope == "all" || scope == "archived"
-        val includeDeleted = if (raw.has("include_deleted")) parser.boolean("include_deleted", false) else scope == "all" || scope == "deleted"
-        val all = buildList {
-            if (scope != "archived" && scope != "deleted") addAll(noteUseCases.listNotes().first())
-            if (includeArchived || scope == "archived") addAll(noteUseCases.listArchivedNotes().first())
-            if (includeDeleted || scope == "deleted") addAll(noteUseCases.listDeletedNotes().first())
+        val includeArchived = parser.boolean("include_archived", false)
+        val includeDeleted = parser.boolean("include_deleted", false)
+        val notes = buildList {
+            addAll(noteUseCases.listNotes().first())
+            if (includeArchived) addAll(noteUseCases.listArchivedNotes().first())
+            if (includeDeleted) addAll(noteUseCases.listDeletedNotes().first())
         }
             .distinctBy { it.id }
             .filter { it.pinned }
             .sortedWith(compareByDescending<Note> { it.updatedAt }.thenByDescending { it.id })
-        val notes = all.take(limit)
+            .take(limit)
+
+        uiCommandBus.emit(UiCommand.ShowPinned)
         val resultJson = JSONObject()
             .putAssistantNoteReferenceRule()
             .put("kind", "pinned")
-            .put("scope", scope)
-            .put("include_archived", includeArchived)
-            .put("include_deleted", includeDeleted)
             .put("count", notes.size)
-            .put("total_matching_count", all.size)
-            .put("result_is_limited", all.size > notes.size)
             .put("results", notes.toAssistantNoteResultsJsonArray())
+            .put("ui_effect", "show_pinned")
+            .put("assistant_next_step_hint", "Pinned notes were listed and the pinned UI was shown. Do not call an extra ui.show_pinned tool.")
             .toString()
         return McpToolResult.success(
-            message = "已列出 ${notes.size} 条置顶便签；当前范围共有 ${all.size} 条",
+            message = "已列出 ${notes.size} 条置顶便签",
             resultJson = resultJson,
             toolName = name,
             risk = McpRiskLevel.Low,
