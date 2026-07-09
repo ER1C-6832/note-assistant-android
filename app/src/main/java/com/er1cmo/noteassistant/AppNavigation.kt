@@ -1,5 +1,8 @@
 package com.er1cmo.noteassistant
 
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Text
@@ -9,14 +12,19 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.er1cmo.noteassistant.assistant.bridge.UiCommand
+import com.er1cmo.noteassistant.assistantui.AssistantEntryOverlay
 import com.er1cmo.noteassistant.notes.ui.detail.NoteColorPickerRoute
 import com.er1cmo.noteassistant.notes.ui.detail.NoteDetailRoute
 import com.er1cmo.noteassistant.notes.ui.editor.NoteEditorRoute
@@ -29,6 +37,8 @@ fun AppNavigation(
     uiCommandViewModel: UiCommandViewModel = hiltViewModel(),
 ) {
     val navController = rememberNavController()
+    val currentBackStackEntry by navController.currentBackStackEntryAsState()
+    val currentRoute = currentBackStackEntry?.destination?.route
     var pendingConfirmationDialog by remember { mutableStateOf<UiCommand.ShowConfirmation?>(null) }
 
     LaunchedEffect(navController) {
@@ -43,6 +53,74 @@ fun AppNavigation(
                 UiCommand.ShowArchive -> navController.navigateToNotesRoot()
                 UiCommand.ShowTrash -> navController.navigateToNotesRoot()
             }
+        }
+    }
+
+    Box(modifier = Modifier.fillMaxSize()) {
+        NavHost(navController = navController, startDestination = AppRoute.Splash.route) {
+            composable(AppRoute.Splash.route) {
+                SplashRoute(
+                    onSplashFinished = {
+                        navController.navigate(AppRoute.Notes.route) {
+                            popUpTo(AppRoute.Splash.route) { inclusive = true }
+                        }
+                    },
+                )
+            }
+            composable(AppRoute.Notes.route) {
+                NoteListRoute(
+                    onCreateClick = { initialTag ->
+                        if (initialTag.isNullOrBlank()) {
+                            navController.navigate(AppRoute.Editor.route)
+                        } else {
+                            navController.navigate(AppRoute.EditorWithTag.createRoute(initialTag))
+                        }
+                    },
+                    onNoteClick = { noteId -> navController.navigate(AppRoute.Detail.createRoute(noteId)) },
+                    onSettingsClick = { navController.navigate(AppRoute.Settings.route) },
+                )
+            }
+            composable(
+                route = AppRoute.Detail.route,
+                arguments = listOf(navArgument("noteId") { type = NavType.LongType }),
+            ) {
+                NoteDetailRoute(
+                    onBackClick = { navController.popBackStack() },
+                    onColorClick = { noteId -> navController.navigate(AppRoute.NoteColor.createRoute(noteId)) },
+                )
+            }
+            composable(
+                route = AppRoute.NoteColor.route,
+                arguments = listOf(navArgument("noteId") { type = NavType.LongType }),
+            ) {
+                NoteColorPickerRoute(onBackClick = { navController.popBackStack() })
+            }
+            composable(AppRoute.Editor.route) {
+                NoteEditorRoute(onBackClick = { navController.popBackStack() })
+            }
+            composable(
+                route = AppRoute.EditorWithTag.route,
+                arguments = listOf(navArgument("tag") { type = NavType.StringType }),
+            ) {
+                NoteEditorRoute(onBackClick = { navController.popBackStack() })
+            }
+            composable(
+                route = AppRoute.EditNote.route,
+                arguments = listOf(navArgument("noteId") { type = NavType.LongType }),
+            ) {
+                NoteEditorRoute(onBackClick = { navController.popBackStack() })
+            }
+            composable(AppRoute.Settings.route) {
+                SettingsRoute(onBackClick = { navController.popBackStack() })
+            }
+        }
+
+        if (currentRoute != AppRoute.Splash.route) {
+            AssistantEntryOverlay(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(end = 16.dp, bottom = 18.dp),
+            )
         }
     }
 
@@ -81,64 +159,6 @@ fun AppNavigation(
                 }
             },
         )
-    }
-
-    NavHost(navController = navController, startDestination = AppRoute.Splash.route) {
-        composable(AppRoute.Splash.route) {
-            SplashRoute(
-                onSplashFinished = {
-                    navController.navigate(AppRoute.Notes.route) {
-                        popUpTo(AppRoute.Splash.route) { inclusive = true }
-                    }
-                },
-            )
-        }
-        composable(AppRoute.Notes.route) {
-            NoteListRoute(
-                onCreateClick = { initialTag ->
-                    if (initialTag.isNullOrBlank()) {
-                        navController.navigate(AppRoute.Editor.route)
-                    } else {
-                        navController.navigate(AppRoute.EditorWithTag.createRoute(initialTag))
-                    }
-                },
-                onNoteClick = { noteId -> navController.navigate(AppRoute.Detail.createRoute(noteId)) },
-                onSettingsClick = { navController.navigate(AppRoute.Settings.route) },
-            )
-        }
-        composable(
-            route = AppRoute.Detail.route,
-            arguments = listOf(navArgument("noteId") { type = NavType.LongType }),
-        ) {
-            NoteDetailRoute(
-                onBackClick = { navController.popBackStack() },
-                onColorClick = { noteId -> navController.navigate(AppRoute.NoteColor.createRoute(noteId)) },
-            )
-        }
-        composable(
-            route = AppRoute.NoteColor.route,
-            arguments = listOf(navArgument("noteId") { type = NavType.LongType }),
-        ) {
-            NoteColorPickerRoute(onBackClick = { navController.popBackStack() })
-        }
-        composable(AppRoute.Editor.route) {
-            NoteEditorRoute(onBackClick = { navController.popBackStack() })
-        }
-        composable(
-            route = AppRoute.EditorWithTag.route,
-            arguments = listOf(navArgument("tag") { type = NavType.StringType }),
-        ) {
-            NoteEditorRoute(onBackClick = { navController.popBackStack() })
-        }
-        composable(
-            route = AppRoute.EditNote.route,
-            arguments = listOf(navArgument("noteId") { type = NavType.LongType }),
-        ) {
-            NoteEditorRoute(onBackClick = { navController.popBackStack() })
-        }
-        composable(AppRoute.Settings.route) {
-            SettingsRoute(onBackClick = { navController.popBackStack() })
-        }
     }
 }
 
