@@ -6,17 +6,16 @@ import com.er1cmo.noteassistant.assistant.mcpbase.McpToolContext
 import com.er1cmo.noteassistant.assistant.mcpbase.McpToolDescriptor
 import com.er1cmo.noteassistant.assistant.mcpbase.McpToolResult
 import com.er1cmo.noteassistant.assistant.mcpbase.ToolArgumentParser
-import com.er1cmo.noteassistant.notes.domain.command.ConfirmationStatus
-import com.er1cmo.noteassistant.notes.domain.repository.CommandTraceRepository
+import com.er1cmo.noteassistant.assistant.tools.common.Phase4ExtendedCommandService
 import javax.inject.Inject
 import org.json.JSONArray
 import org.json.JSONObject
 
 class AssistantListPendingConfirmationsTool @Inject constructor(
-    private val commandTraceRepository: CommandTraceRepository,
+    private val commandService: Phase4ExtendedCommandService,
 ) : McpTool {
     override val name: String = "assistant.list_pending_confirmations"
-    override val description: String = "列出待确认操作，供语音确认或设置页调试使用。"
+    override val description: String = "列出未过期的 pending confirmation，供语音确认/拒绝恢复上下文。"
     override val riskLevel: McpRiskLevel = McpRiskLevel.Low
     override val descriptor: McpToolDescriptor = McpToolDescriptor(
         name = name,
@@ -25,8 +24,7 @@ class AssistantListPendingConfirmationsTool @Inject constructor(
             {
               "type": "object",
               "properties": {
-                "limit": { "type": "integer", "minimum": 1, "maximum": 50 },
-                "only_pending": { "type": "boolean" }
+                "limit": { "type": "integer" }
               },
               "additionalProperties": false
             }
@@ -41,35 +39,26 @@ class AssistantListPendingConfirmationsTool @Inject constructor(
 
     override suspend fun call(argumentsJson: String, context: McpToolContext): McpToolResult {
         val parser = ToolArgumentParser.parse(argumentsJson).getOrElse { error ->
-            return McpToolResult.invalidJson(toolName = name, argumentsJson = argumentsJson, message = "assistant.list_pending_confirmations 参数不是有效 JSON：${error.message ?: "解析失败"}")
+            return McpToolResult.invalidJson(name, argumentsJson, "assistant.list_pending_confirmations 参数不是有效 JSON：${error.message ?: "解析失败"}")
         }
-        val limit = parser.int("limit", 20).coerceIn(1, 50)
-        val onlyPending = parser.boolean("only_pending", true)
-        val pending = commandTraceRepository.listPendingConfirmations(limit = limit, onlyPending = onlyPending)
-        val resultJson = JSONObject()
+        val limit = parser.int("limit", 5).coerceIn(1, 50)
+        val pending = commandService.listPendingConfirmations(limit)
+        val result = JSONObject()
             .put("count", pending.size)
             .put("results", JSONArray().also { array ->
                 pending.forEach { item ->
+                    val preview = runCatching { JSONObject(item.previewJson) }.getOrElse { JSONObject().put("summary", item.previewJson.take(120)) }
                     array.put(
                         JSONObject()
                             .put("confirmation_id", item.confirmationId)
-                            .put("command_log_id", item.commandLogId)
                             .put("tool_name", item.toolName.storageValue)
-                            .put("risk", item.riskLevel.storageValue)
-                            .put("status", item.status.storageValue)
-                            .put("preview", runCatching { JSONObject(item.previewJson) }.getOrDefault(JSONObject().put("preview", item.previewJson)))
-                            .put("created_at", item.createdAt)
-                            .put("expires_at", item.expiresAt),
+                            .put("summary", preview.optString("summary", item.toolName.storageValue))
+                            .put("expires_at", item.expiresAt)
+                            .put("command_log_id", item.commandLogId),
                     )
                 }
             })
             .toString()
-        val pendingCount = pending.count { it.status == ConfirmationStatus.Pending }
-        return McpToolResult.success(
-            message = "待确认操作 $pendingCount 个，返回 ${pending.size} 条记录",
-            resultJson = resultJson,
-            toolName = name,
-            risk = McpRiskLevel.Low,
-        )
+        return McpToolResult.success("当前有 ${pending.size} 个待确认操作", result, name, McpRiskLevel.Low)
     }
 }

@@ -30,6 +30,7 @@ kapt {
 dependencies {
     implementation(libs.hilt.android)
     kapt(libs.hilt.compiler)
+    implementation(project(":core-common"))
     implementation(project(":assistant-mcp-base"))
     implementation(project(":assistant-bridge"))
     implementation(project(":notes-domain"))

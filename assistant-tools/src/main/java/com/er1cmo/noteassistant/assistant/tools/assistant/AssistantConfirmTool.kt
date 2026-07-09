@@ -6,12 +6,12 @@ import com.er1cmo.noteassistant.assistant.mcpbase.McpToolContext
 import com.er1cmo.noteassistant.assistant.mcpbase.McpToolDescriptor
 import com.er1cmo.noteassistant.assistant.mcpbase.McpToolResult
 import com.er1cmo.noteassistant.assistant.mcpbase.ToolArgumentParser
+import com.er1cmo.noteassistant.assistant.tools.common.Phase4ExtendedCommandService
 import com.er1cmo.noteassistant.assistant.tools.common.toMcpToolResult
-import com.er1cmo.noteassistant.notes.domain.command.NoteCommandService
 import javax.inject.Inject
 
 class AssistantConfirmTool @Inject constructor(
-    private val commandService: NoteCommandService,
+    private val commandService: Phase4ExtendedCommandService,
 ) : McpTool {
     override val name: String = "assistant.confirm"
     override val description: String = "确认执行一个 pending confirmation。必须传入 confirmation_id。"

@@ -13,11 +13,11 @@ import com.er1cmo.noteassistant.notes.domain.model.NoteRevision
 import com.er1cmo.noteassistant.notes.domain.model.PendingConfirmation
 import com.er1cmo.noteassistant.notes.domain.repository.CommandTraceRepository
 import com.er1cmo.noteassistant.notes.domain.repository.CommandTraceTransaction
+import javax.inject.Inject
+import javax.inject.Singleton
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
-import javax.inject.Inject
-import javax.inject.Singleton
 
 @Singleton
 class CommandTraceRepositoryImpl @Inject constructor(
@@ -61,8 +61,8 @@ class CommandTraceRepositoryImpl @Inject constructor(
         pendingConfirmationDao.getPendingConfirmationById(confirmationId)?.toDomain()
     }
 
-    override suspend fun listPendingConfirmations(limit: Int, onlyPending: Boolean): List<PendingConfirmation> = withContext(dispatchers.io) {
-        pendingConfirmationDao.listPendingConfirmations(limit = limit, onlyPending = onlyPending).map { it.toDomain() }
+    override suspend fun listPendingConfirmations(limit: Int): List<PendingConfirmation> = withContext(dispatchers.io) {
+        pendingConfirmationDao.listPendingConfirmations(limit).map { it.toDomain() }
     }
 
     override suspend fun updatePendingConfirmation(pendingConfirmation: PendingConfirmation) = withContext(dispatchers.io) {
