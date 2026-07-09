@@ -16,8 +16,7 @@ class NotesListByTagTool @Inject constructor(
     private val noteUseCases: NoteUseCases,
 ) : McpTool {
     override val name: String = "notes.list_by_tag"
-    override val description: String =
-        "按标签列出便签，用于把“某个标签下的便签”解析成具体便签。结果会返回标题、正文内容、标签和状态。"
+    override val description: String = "按标签列出便签，返回完整内容和 note_ref，用于把用户可见标签下的便签解析成具体目标。"
     override val riskLevel: McpRiskLevel = McpRiskLevel.Low
     override val descriptor: McpToolDescriptor = McpToolDescriptor(
         name = name,
@@ -31,7 +30,8 @@ class NotesListByTagTool @Inject constructor(
                 "tag": { "type": "string" },
                 "limit": { "type": "integer" },
                 "include_archived": { "type": "boolean" },
-                "include_deleted": { "type": "boolean" }
+                "include_deleted": { "type": "boolean" },
+                "scope": { "type": "string", "enum": ["active", "all", "archived", "deleted"] }
               },
               "additionalProperties": false
             }
@@ -48,6 +48,7 @@ class NotesListByTagTool @Inject constructor(
         val parser = ToolArgumentParser.parse(argumentsJson).getOrElse { error ->
             return McpToolResult.invalidJson(name, argumentsJson, "notes.list_by_tag 参数不是有效 JSON：${error.message ?: "解析失败"}")
         }
+        val raw = parser.raw()
         val tagId = parser.optionalLong("tag_id")?.takeIf { it > 0L }
         val tagName = parser.optionalString("tag_name", "").ifBlank { parser.optionalString("tag", "") }.trimStart('#')
         if (tagId == null && tagName.isBlank()) {
@@ -61,12 +62,13 @@ class NotesListByTagTool @Inject constructor(
         }
 
         val limit = parser.int("limit", 20).coerceIn(1, 100)
-        val includeArchived = parser.boolean("include_archived", false)
-        val includeDeleted = parser.boolean("include_deleted", false)
-        val notes = buildList {
-            addAll(noteUseCases.listNotes().first())
-            if (includeArchived) addAll(noteUseCases.listArchivedNotes().first())
-            if (includeDeleted) addAll(noteUseCases.listDeletedNotes().first())
+        val scope = parser.optionalString("scope", "active").ifBlank { "active" }.lowercase()
+        val includeArchived = if (raw.has("include_archived")) parser.boolean("include_archived", false) else scope == "all" || scope == "archived"
+        val includeDeleted = if (raw.has("include_deleted")) parser.boolean("include_deleted", false) else scope == "all" || scope == "deleted"
+        val all = buildList {
+            if (scope != "archived" && scope != "deleted") addAll(noteUseCases.listNotes().first())
+            if (includeArchived || scope == "archived") addAll(noteUseCases.listArchivedNotes().first())
+            if (includeDeleted || scope == "deleted") addAll(noteUseCases.listDeletedNotes().first())
         }
             .distinctBy { it.id }
             .filter { note ->
@@ -76,18 +78,27 @@ class NotesListByTagTool @Inject constructor(
                 }
             }
             .sortedWith(compareByDescending<Note> { it.updatedAt }.thenByDescending { it.id })
-            .take(limit)
-
-        val resultJson = JSONObject()
+        val notes = all.take(limit)
+        val result = JSONObject()
+            .putAssistantNoteReferenceRule()
             .put("kind", "by_tag")
             .put("tag_id", tagId ?: JSONObject.NULL)
-            .put("tag_name", tagName.ifBlank { JSONObject.NULL })
+        if (tagName.isBlank()) {
+            result.put("tag_name", JSONObject.NULL)
+        } else {
+            result.put("tag_name", tagName)
+        }
+        val resultJson = result
+            .put("scope", scope)
+            .put("include_archived", includeArchived)
+            .put("include_deleted", includeDeleted)
             .put("count", notes.size)
-            .putAssistantNoteReferenceRule()
+            .put("total_matching_count", all.size)
+            .put("result_is_limited", all.size > notes.size)
             .put("results", notes.toAssistantNoteResultsJsonArray())
             .toString()
         return McpToolResult.success(
-            message = "已列出 ${notes.size} 条标签便签",
+            message = "已列出 ${notes.size} 条标签便签；当前范围共有 ${all.size} 条",
             resultJson = resultJson,
             toolName = name,
             risk = McpRiskLevel.Low,

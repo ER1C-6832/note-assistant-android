@@ -12,9 +12,7 @@ private const val NOTE_CONTENT_LIMIT = 1200
 private const val NOTE_SNIPPET_LIMIT = 160
 
 internal fun List<Note>.toAssistantNoteResultsJsonArray(): JSONArray = JSONArray().also { array ->
-    forEach { note ->
-        array.put(note.toAssistantNoteResultJson())
-    }
+    forEach { note -> array.put(note.toAssistantNoteResultJson()) }
 }
 
 internal fun Note.toAssistantNoteResultJson(): JSONObject {
@@ -47,6 +45,7 @@ internal fun JSONObject.putAssistantNoteReferenceRule(): JSONObject =
 
 private fun Note.userVisibleReferenceJson(visibleTitle: String): JSONObject = JSONObject()
     .put("preferred_ref", visibleTitle)
+    .put("safe_read_arguments", JSONObject().put("note_ref", visibleTitle).put("scope", "all"))
     .put("safe_delete_arguments", JSONObject().put("note_ref", visibleTitle))
     .put("internal_note_id", id)
     .put("internal_id_rule", "Use note_id only if it came from this exact result, not from a spoken title or number.")

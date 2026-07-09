@@ -19,8 +19,7 @@ abstract class AbstractNoteListTool(
     abstract suspend fun loadNotes(): List<Note>
 
     override val riskLevel: McpRiskLevel = McpRiskLevel.Low
-    override val description: String
-        get() = "$title。结果会返回用户可见标题、正文内容、标签和状态；note_id 仅是内部 ID，语音里不要把用户说的数字直接当 note_id。"
+    override val description: String get() = "$title。返回完整内容、标题、状态和用户可见 note_ref，避免把用户说的数字误当 note_id。"
     override val descriptor: McpToolDescriptor get() = McpToolDescriptor(
         name = name,
         description = description,
@@ -46,16 +45,21 @@ abstract class AbstractNoteListTool(
             return McpToolResult.invalidJson(name, argumentsJson, "参数不是有效 JSON：${error.message ?: "解析失败"}")
         }
         val limit = parser.int("limit", 20).coerceIn(1, 100)
-        val notes = loadNotes()
-            .sortedWith(compareByDescending<Note> { it.updatedAt }.thenByDescending { it.id })
-            .take(limit)
+        val all = loadNotes().sortedWith(compareByDescending<Note> { it.updatedAt }.thenByDescending { it.id })
+        val notes = all.take(limit)
         return McpToolResult.success(
-            message = "已列出 ${notes.size} 条便签",
+            message = "已列出 ${notes.size} 条便签；当前范围共有 ${all.size} 条",
             resultJson = JSONObject()
+                .putAssistantNoteReferenceRule()
                 .put("kind", listKind)
                 .put("count", notes.size)
-                .putAssistantNoteReferenceRule()
+                .put("total_matching_count", all.size)
+                .put("result_is_limited", all.size > notes.size)
                 .put("results", notes.toAssistantNoteResultsJsonArray())
+                .put(
+                    "assistant_next_step_hint",
+                    "Use note_ref/title/query for user-visible speech. Use note_id only if it came from this result item.",
+                )
                 .toString(),
             toolName = name,
             risk = McpRiskLevel.Low,
