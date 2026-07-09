@@ -1,5 +1,6 @@
 package com.er1cmo.noteassistant.assistant.runtime.network
 
+import com.er1cmo.noteassistant.assistant.mcpbase.McpToolContext
 import com.er1cmo.noteassistant.assistant.runtime.protocol.ProtocolEvent
 import com.er1cmo.noteassistant.assistant.runtime.protocol.XiaozhiMessageBuilder
 import com.er1cmo.noteassistant.assistant.runtime.protocol.XiaozhiMessageRouter
@@ -78,7 +79,7 @@ class XiaozhiWebSocketClient @Inject constructor(
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
-                val event = messageRouter.routeText(text)
+                val event = messageRouter.routeText(text, realContext(sessionId.ifBlank { null }))
                 onEvent(XiaozhiWebSocketEvent.IncomingText(text, event))
                 if (event is ProtocolEvent.Connected) {
                     if (event.sessionId.isBlank()) {
@@ -200,6 +201,12 @@ class XiaozhiWebSocketClient @Inject constructor(
         require(config.deviceId.isNotBlank()) { "Device ID 未生成" }
         require(config.clientId.isNotBlank()) { "Client ID 未生成" }
     }
+
+    private fun realContext(sessionId: String?): McpToolContext = McpToolContext(
+        source = McpToolContext.SOURCE_VOICE,
+        runtimeMode = "real",
+        sessionId = sessionId,
+    )
 
     private companion object {
         const val HELLO_TIMEOUT_MS = 8_000L

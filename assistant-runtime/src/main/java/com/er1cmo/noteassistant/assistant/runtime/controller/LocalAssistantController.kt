@@ -29,6 +29,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import org.json.JSONObject
 
 @Singleton
 class LocalAssistantController @Inject constructor(
@@ -91,7 +92,7 @@ class LocalAssistantController @Inject constructor(
         mutableState.value = stateMachine.disconnected(mutableState.value, "switch_to_fake_runtime", nowMillis()).copy(
             runtimeMode = AssistantRuntimeMode.Fake,
             fakeRuntime = true,
-            statusText = "已切换到 Gate A Fake Runtime；真实 Xiaozhi 链路不会被使用。",
+            statusText = "已切换到 Fake Runtime；MCP 工具调用将按本地模拟来源记录。",
             lastReconnectDecision = "runtime_mode_fake",
         )
     }
@@ -104,7 +105,7 @@ class LocalAssistantController @Inject constructor(
         mutableState.value = stateMachine.disconnected(mutableState.value, "switch_to_real_runtime", nowMillis()).copy(
             runtimeMode = AssistantRuntimeMode.Real,
             fakeRuntime = false,
-            statusText = "已切换到 Gate B Real Xiaozhi Runtime；请先真实 OTA，再连接真实 WebSocket。",
+            statusText = "已切换到 Real Xiaozhi Runtime；请先真实 OTA，再连接真实 WebSocket。",
             lastReconnectDecision = "runtime_mode_real",
             audioUploadedFrames = 0,
         )
@@ -126,7 +127,7 @@ class LocalAssistantController @Inject constructor(
         val identity = deviceIdentityManager.ensureIdentity()
         val config = XiaozhiConnectionConfig(
             websocketUrl = settingsRepository.websocketUrl.first(),
-            websocketToken = settingsRepository.assistantWebsocketToken.first().ifBlank { "phase3-fake-token" },
+            websocketToken = settingsRepository.assistantWebsocketToken.first().ifBlank { "phase4-fake-token" },
             deviceId = identity.deviceId,
             clientId = identity.clientId,
         )
@@ -193,7 +194,7 @@ class LocalAssistantController @Inject constructor(
                 clientId = identity.clientId,
                 websocketUrl = config.websocketUrl,
                 gateBRealHandshakeVerified = true,
-                statusText = "Gate B：真实 WebSocket hello/session 握手完成",
+                statusText = "真实 WebSocket hello/session 握手完成",
             )
         } else if (!mutableState.value.isConnected) {
             mutableState.value = stateMachine.error(
@@ -303,7 +304,7 @@ class LocalAssistantController @Inject constructor(
         mutableState.value = thinking.copy(
             runtimeMode = AssistantRuntimeMode.Real,
             fakeRuntime = false,
-            statusText = "Gate B：真实文本已发送，等待服务端回复",
+            statusText = "真实文本已发送，等待服务端回复",
         )
     }
 
@@ -330,7 +331,6 @@ class LocalAssistantController @Inject constructor(
     private suspend fun startFakePushToTalk() {
         if (!mutableState.value.isConnected) connectFake()
         if (!mutableState.value.isConnected) return
-
         val listenStart = fakeWebSocketClient.sendStartListening(mode = "manual")
         if (!listenStart.success) {
             mutableState.value = stateMachine.error(mutableState.value, listenStart.message, nowMillis())
@@ -346,7 +346,7 @@ class LocalAssistantController @Inject constructor(
         mutableState.value = stateMachine.startListening(mutableState.value, nowMillis()).copy(
             runtimeMode = AssistantRuntimeMode.Fake,
             fakeRuntime = true,
-            statusText = "Gate A：真实 AudioRecord / Opus 已启动，上传到 Fake WebSocket",
+            statusText = "真实 AudioRecord / Opus 已启动，上传到 Fake WebSocket",
             errorMessage = null,
             lastClientJson = listenStart.outgoingJson,
             lastServerJson = listenStart.incomingJson,
@@ -363,7 +363,6 @@ class LocalAssistantController @Inject constructor(
     private suspend fun startRealPushToTalk() {
         if (!mutableState.value.isConnected || !realWebSocketClient.isConnected()) connectReal()
         if (!mutableState.value.isConnected || !realWebSocketClient.isConnected()) return
-
         val listenStarted = realWebSocketClient.sendStartListening(mode = "manual", onEvent = ::handleRealWebSocketEvent)
         if (!listenStarted) {
             mutableState.value = stateMachine.error(mutableState.value, "真实 WebSocket listen/start 发送失败", nowMillis()).copy(
@@ -389,7 +388,7 @@ class LocalAssistantController @Inject constructor(
         mutableState.value = stateMachine.startListening(mutableState.value, nowMillis()).copy(
             runtimeMode = AssistantRuntimeMode.Real,
             fakeRuntime = false,
-            statusText = "Gate B：真实 AudioRecord / Opus 已启动，正在上传到真实 Xiaozhi WebSocket",
+            statusText = "真实 AudioRecord / Opus 已启动，正在上传到真实 Xiaozhi WebSocket",
             errorMessage = null,
             audioCapturedFrames = 0,
             audioEncodedFrames = 0,
@@ -417,7 +416,7 @@ class LocalAssistantController @Inject constructor(
             fakeRuntime = true,
             phase = AssistantPhase.Thinking,
             audio = AssistantAudioStatus.Idle,
-            statusText = if (stoppedAudio.stoppedWithinBudget) "Gate A：真实 Audio 已在 ${stoppedAudio.stopLatencyMs}ms 内停止，开始 loopback 播放验证" else "真实 Audio 停止超时：${stoppedAudio.stopLatencyMs}ms",
+            statusText = if (stoppedAudio.stoppedWithinBudget) "真实 Audio 已在 ${stoppedAudio.stopLatencyMs}ms 内停止，开始 loopback 播放验证" else "真实 Audio 停止超时：${stoppedAudio.stopLatencyMs}ms",
             errorMessage = stoppedAudio.errorMessage ?: if (stoppedAudio.stoppedWithinBudget) null else "PTT release 后停止超过 300ms",
             lastClientJson = listenStop.outgoingJson,
             lastServerJson = listenStop.incomingJson,
@@ -436,7 +435,7 @@ class LocalAssistantController @Inject constructor(
         }
         delay(80)
         mutableState.value = stateMachine.speaking(mutableState.value, nowMillis()).copy(
-            lastAssistantText = "Gate A：收到 ${fakeWebSocketClient.uploadedAudioFrameCount()} 帧 Opus，开始 loopback 解码播放。",
+            lastAssistantText = "收到 ${fakeWebSocketClient.uploadedAudioFrameCount()} 帧 Opus，开始 loopback 解码播放。",
             audioCapturedFrames = stoppedAudio.pcmFrames,
             audioEncodedFrames = stoppedAudio.opusFrames,
             audioUploadedFrames = fakeWebSocketClient.uploadedAudioFrameCount(),
@@ -444,7 +443,7 @@ class LocalAssistantController @Inject constructor(
             lastAudioSummary = stoppedAudio.summary,
         )
         val playback = realAudioEngine.playOpusFrames(stoppedAudio.encodedFrames)
-        mutableState.value = stateMachine.assistantText(mutableState.value, if (playback.success) "Gate A Real Audio loopback 完成：${playback.summary}" else "Gate A Real Audio loopback 未通过：${playback.summary}", nowMillis()).copy(
+        mutableState.value = stateMachine.assistantText(mutableState.value, if (playback.success) "Real Audio loopback 完成：${playback.summary}" else "Real Audio loopback 未通过：${playback.summary}", nowMillis()).copy(
             runtimeMode = AssistantRuntimeMode.Fake,
             fakeRuntime = true,
             audioCapturedFrames = stoppedAudio.pcmFrames,
@@ -466,7 +465,7 @@ class LocalAssistantController @Inject constructor(
             phase = AssistantPhase.Thinking,
             audio = AssistantAudioStatus.Idle,
             statusText = if (stoppedAudio.stoppedWithinBudget) {
-                "Gate B：真实 Audio 已上传 $realUploadedAudioFrames 帧，listen/stop=${listenStopped}，等待真实服务端文本或 TTS/audio"
+                "真实 Audio 已上传 $realUploadedAudioFrames 帧，listen/stop=$listenStopped，等待真实服务端文本或 TTS/audio"
             } else {
                 "真实 Audio 停止超时：${stoppedAudio.stopLatencyMs}ms"
             },
@@ -491,12 +490,17 @@ class LocalAssistantController @Inject constructor(
     override suspend fun simulateIncomingToolCall(toolName: String, argumentsJson: String) {
         if (!fakeWebSocketClient.isConnected()) connectFake()
         val turn = fakeWebSocketClient.simulateIncomingToolCall(toolName, argumentsJson)
+        val trace = (turn.event as? ProtocolEvent.McpResponse)?.toToolTrace()
         mutableState.value = mutableState.value.copy(
             lastAssistantText = turn.message,
-            statusText = if (turn.success) "MCP tools/call 已安全处理：$toolName" else turn.message,
+            statusText = if (turn.success) "MCP tools/call 已处理：$toolName" else turn.message,
             lastServerJson = turn.incomingJson,
             lastClientJson = turn.outgoingResponseJson,
             lastProtocolEvent = turn.event.javaClass.simpleName,
+            lastToolName = trace?.toolName ?: toolName,
+            lastToolStatus = trace?.status,
+            lastCommandLogId = trace?.commandLogId,
+            lastConfirmationId = trace?.confirmationId,
             lastEventAt = nowMillis(),
         )
     }
@@ -506,7 +510,7 @@ class LocalAssistantController @Inject constructor(
         val turn = fakeWebSocketClient.simulateIncomingToolsListRequest()
         mutableState.value = mutableState.value.copy(
             lastAssistantText = turn.message,
-            statusText = if (turn.success) "Phase4 MCP tools/list 已通过 runtime executor 返回 descriptors" else turn.message,
+            statusText = if (turn.success) "MCP tools/list 已通过 runtime executor 返回 descriptors" else turn.message,
             lastServerJson = turn.incomingJson,
             lastClientJson = turn.outgoingResponseJson,
             lastProtocolEvent = turn.event.javaClass.simpleName,
@@ -553,7 +557,11 @@ class LocalAssistantController @Inject constructor(
             gateBRealTextVerified = false,
             gateBRealAudioUploadVerified = false,
             gateBRealAudioPlaybackVerified = false,
-            gateBRealToolCallBlockedVerified = false,
+            phase4RealToolCallVerified = false,
+            lastToolName = null,
+            lastToolStatus = null,
+            lastCommandLogId = null,
+            lastConfirmationId = null,
             statusText = "设备身份已重置：${identity.displayDeviceId}，需要重新激活。",
             errorMessage = null,
             lastEventAt = nowMillis(),
@@ -686,7 +694,7 @@ class LocalAssistantController @Inject constructor(
                     runtimeMode = AssistantRuntimeMode.Real,
                     fakeRuntime = false,
                     gateBRealHandshakeVerified = true,
-                    statusText = "Gate B：真实 WebSocket hello/session 握手完成",
+                    statusText = "真实 WebSocket hello/session 握手完成",
                     lastProtocolEvent = event.javaClass.simpleName,
                 )
             }
@@ -722,7 +730,7 @@ class LocalAssistantController @Inject constructor(
                     runtimeMode = AssistantRuntimeMode.Real,
                     fakeRuntime = false,
                     gateBRealHandshakeVerified = event.sessionId.isNotBlank(),
-                    statusText = "Gate B：真实服务端 hello 已解析，session=${event.sessionId}",
+                    statusText = "真实服务端 hello 已解析，session=${event.sessionId}",
                 )
             }
             is ProtocolEvent.AssistantText -> {
@@ -730,7 +738,7 @@ class LocalAssistantController @Inject constructor(
                     runtimeMode = AssistantRuntimeMode.Real,
                     fakeRuntime = false,
                     gateBRealTextVerified = true,
-                    statusText = "Gate B：收到真实助手文本回复",
+                    statusText = "收到真实助手文本回复",
                 )
             }
             is ProtocolEvent.TtsState -> {
@@ -740,17 +748,22 @@ class LocalAssistantController @Inject constructor(
                 } else {
                     base.copy(phase = AssistantPhase.Speaking, audio = AssistantAudioStatus.Playing)
                 }
-                mutableState.value = next.copy(statusText = "Gate B：真实 TTS state=${event.state}")
+                mutableState.value = next.copy(statusText = "真实 TTS state=${event.state}")
             }
             is ProtocolEvent.ListenState -> {
-                mutableState.value = base.copy(statusText = "Gate B：真实 listen state=${event.state}")
+                mutableState.value = base.copy(statusText = "真实 listen state=${event.state}")
             }
             is ProtocolEvent.McpResponse -> {
                 val sent = realWebSocketClient.sendMcpResponse(event.responseJson, ::handleRealWebSocketEvent)
+                val trace = event.toToolTrace()
                 mutableState.value = base.copy(
                     lastAssistantText = event.message,
-                    statusText = "Gate B：真实服务端 MCP ${event.requestMethod ?: "request"} 已在 Phase3 边界处理，response_sent=$sent",
-                    gateBRealToolCallBlockedVerified = event.blocked && sent,
+                    statusText = "真实服务端 MCP ${event.requestMethod ?: "request"} 已通过 Phase4 工具链处理，response_sent=$sent",
+                    phase4RealToolCallVerified = base.phase4RealToolCallVerified || (sent && trace.toolName != null),
+                    lastToolName = trace.toolName,
+                    lastToolStatus = trace.status,
+                    lastCommandLogId = trace.commandLogId,
+                    lastConfirmationId = trace.confirmationId,
                 )
             }
             is ProtocolEvent.ProtocolError -> {
@@ -760,10 +773,10 @@ class LocalAssistantController @Inject constructor(
                 )
             }
             is ProtocolEvent.RawJson -> {
-                mutableState.value = base.copy(statusText = "Gate B：收到真实未处理消息 type=${event.type}")
+                mutableState.value = base.copy(statusText = "收到真实未处理消息 type=${event.type}")
             }
             is ProtocolEvent.ToolCall -> {
-                mutableState.value = base.copy(statusText = "Gate B：收到旧式 ToolCall 事件 ${event.toolName}，未执行便签工具")
+                mutableState.value = base.copy(statusText = "收到旧式 ToolCall 事件 ${event.toolName}；请使用 MCP tools/call。")
             }
             is ProtocolEvent.BinaryAudio -> handleRealIncomingAudio(event.data)
             is ProtocolEvent.Closed -> {
@@ -781,7 +794,7 @@ class LocalAssistantController @Inject constructor(
                 runtimeMode = AssistantRuntimeMode.Real,
                 fakeRuntime = false,
                 lastProtocolEvent = "IncomingBinary",
-                statusText = "Gate B：收到真实服务端二进制音频，正在解码播放",
+                statusText = "收到真实服务端二进制音频，正在解码播放",
             )
             mutableState.value = before
             val playback = realAudioEngine.playIncomingOpusFrame(bytes)
@@ -792,7 +805,7 @@ class LocalAssistantController @Inject constructor(
                 lastAudioSummary = playback.summary,
                 lastAssistantText = playback.summary,
                 gateBRealAudioPlaybackVerified = mutableState.value.gateBRealAudioPlaybackVerified || playback.success,
-                statusText = if (playback.success) "Gate B：真实服务端 audio/TTS 已解码并写入 AudioTrack" else "Gate B：真实服务端音频帧已收到，等待可播放 PCM",
+                statusText = if (playback.success) "真实服务端 audio/TTS 已解码并写入 AudioTrack" else "真实服务端音频帧已收到，等待可播放 PCM",
                 lastEventAt = nowMillis(),
             )
         }
@@ -829,6 +842,32 @@ class LocalAssistantController @Inject constructor(
         delay(120)
         connect()
     }
+
+    private fun ProtocolEvent.McpResponse.toToolTrace(): ToolTrace {
+        val structured = runCatching {
+            JSONObject(responseJson)
+                .optJSONObject("result")
+                ?.optJSONObject("structuredContent")
+        }.getOrNull()
+        return ToolTrace(
+            toolName = toolName ?: structured?.optString("tool_name")?.ifBlank { null },
+            status = structured?.optString("status")?.ifBlank { status.storageValue } ?: status.storageValue,
+            commandLogId = structured.optNullableLong("command_log_id"),
+            confirmationId = structured?.optString("confirmation_id")?.takeUnless { it.isBlank() || it == "null" },
+        )
+    }
+
+    private fun JSONObject?.optNullableLong(name: String): Long? {
+        if (this == null || !has(name) || isNull(name)) return null
+        return optLong(name, 0L).takeIf { it > 0L }
+    }
+
+    private data class ToolTrace(
+        val toolName: String?,
+        val status: String?,
+        val commandLogId: Long?,
+        val confirmationId: String?,
+    )
 
     private fun nowMillis(): Long = System.currentTimeMillis()
 }

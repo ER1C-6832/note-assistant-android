@@ -76,13 +76,24 @@ data class AssistantState(
     val gateBRealTextVerified: Boolean = false,
     val gateBRealAudioUploadVerified: Boolean = false,
     val gateBRealAudioPlaybackVerified: Boolean = false,
-    val gateBRealToolCallBlockedVerified: Boolean = false,
+    val phase4RealToolCallVerified: Boolean = false,
+    val lastToolName: String? = null,
+    val lastToolStatus: String? = null,
+    val lastCommandLogId: Long? = null,
+    val lastConfirmationId: String? = null,
 ) {
     val isConnected: Boolean
         get() = connection == AssistantConnectionStatus.Connected && sessionId != null
 
     val isRealRuntime: Boolean
         get() = runtimeMode == AssistantRuntimeMode.Real
+
+    @Deprecated(
+        message = "Use phase4RealToolCallVerified. Phase4 tools are executed, not merely blocked.",
+        replaceWith = ReplaceWith("phase4RealToolCallVerified"),
+    )
+    val gateBRealToolCallBlockedVerified: Boolean
+        get() = phase4RealToolCallVerified
 
     companion object {
         fun disabled(nowMillis: Long? = null): AssistantState = AssistantState(

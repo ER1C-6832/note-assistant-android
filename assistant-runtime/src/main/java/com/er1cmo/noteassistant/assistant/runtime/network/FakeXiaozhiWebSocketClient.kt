@@ -1,5 +1,6 @@
 package com.er1cmo.noteassistant.assistant.runtime.network
 
+import com.er1cmo.noteassistant.assistant.mcpbase.McpToolContext
 import com.er1cmo.noteassistant.assistant.runtime.protocol.ProtocolEvent
 import com.er1cmo.noteassistant.assistant.runtime.protocol.XiaozhiMessageBuilder
 import com.er1cmo.noteassistant.assistant.runtime.protocol.XiaozhiMessageRouter
@@ -25,10 +26,10 @@ class FakeXiaozhiWebSocketClient @Inject constructor(
     suspend fun connect(config: XiaozhiConnectionConfig): FakeWebSocketConnectResult {
         delay(80)
         uploadedAudioFrames = 0
-        val nextSessionId = "phase3-fake-ws-${System.currentTimeMillis()}"
+        val nextSessionId = "phase4-fake-ws-${System.currentTimeMillis()}"
         val outgoingHello = messageBuilder.hello()
         val incomingHello = "{\"type\":\"hello\",\"transport\":\"websocket\",\"session_id\":\"$nextSessionId\"}"
-        val event = messageRouter.routeText(incomingHello)
+        val event = messageRouter.routeText(incomingHello, fakeContext(nextSessionId))
         if (event is ProtocolEvent.Connected && event.sessionId.isNotBlank()) {
             sessionId = event.sessionId
             connected = true
@@ -59,8 +60,8 @@ class FakeXiaozhiWebSocketClient @Inject constructor(
         }
         delay(80)
         val outgoing = messageBuilder.listenDetect(currentSession, text)
-        val incoming = "{\"session_id\":\"$currentSession\",\"type\":\"text\",\"text\":\"Fake Xiaozhi：已通过 Fake WebSocket 收到『${text.escapeJson()}』，Phase3 不执行便签工具。\"}"
-        val event = messageRouter.routeText(incoming)
+        val incoming = "{\"session_id\":\"$currentSession\",\"type\":\"text\",\"text\":\"Fake Xiaozhi：已通过 Fake WebSocket 收到『${text.escapeJson()}』。\"}"
+        val event = messageRouter.routeText(incoming, fakeContext(currentSession))
         return FakeWebSocketTextTurn(
             success = true,
             outgoingJson = outgoing,
@@ -77,7 +78,7 @@ class FakeXiaozhiWebSocketClient @Inject constructor(
         uploadedAudioFrames = 0
         val outgoing = messageBuilder.startListening(currentSession, mode)
         val incoming = "{\"session_id\":\"$currentSession\",\"type\":\"listen\",\"state\":\"start\",\"mode\":\"${mode.escapeJson()}\"}"
-        val event = messageRouter.routeText(incoming)
+        val event = messageRouter.routeText(incoming, fakeContext(currentSession))
         return FakeWebSocketControlTurn(
             success = event is ProtocolEvent.ListenState,
             outgoingJson = outgoing,
@@ -116,7 +117,7 @@ class FakeXiaozhiWebSocketClient @Inject constructor(
         delay(30)
         val outgoing = messageBuilder.stopListening(currentSession)
         val incoming = "{\"session_id\":\"$currentSession\",\"type\":\"listen\",\"state\":\"stop\",\"uploaded_audio_frames\":$uploadedAudioFrames}"
-        val event = messageRouter.routeText(incoming)
+        val event = messageRouter.routeText(incoming, fakeContext(currentSession))
         return FakeWebSocketControlTurn(
             success = event is ProtocolEvent.ListenState,
             outgoingJson = outgoing,
@@ -127,7 +128,7 @@ class FakeXiaozhiWebSocketClient @Inject constructor(
     }
 
     suspend fun simulateIncomingToolsListRequest(): FakeWebSocketMcpTurn {
-        val payloadJson = "{\"jsonrpc\":\"2.0\",\"id\":\"phase3-tools-list\",\"method\":\"tools/list\",\"params\":{}}"
+        val payloadJson = "{\"jsonrpc\":\"2.0\",\"id\":\"phase4-tools-list\",\"method\":\"tools/list\",\"params\":{}}"
         return simulateIncomingMcpRequest(payloadJson)
     }
 
@@ -136,7 +137,7 @@ class FakeXiaozhiWebSocketClient @Inject constructor(
         argumentsJson: String,
     ): FakeWebSocketMcpTurn {
         val safeArguments = argumentsJson.ifBlank { "{}" }
-        val payloadJson = "{\"jsonrpc\":\"2.0\",\"id\":\"phase3-tools-call\",\"method\":\"tools/call\",\"params\":{\"name\":\"${toolName.escapeJson()}\",\"arguments\":$safeArguments}}"
+        val payloadJson = "{\"jsonrpc\":\"2.0\",\"id\":\"phase4-tools-call\",\"method\":\"tools/call\",\"params\":{\"name\":\"${toolName.escapeJson()}\",\"arguments\":$safeArguments}}"
         return simulateIncomingMcpRequest(payloadJson)
     }
 
@@ -153,7 +154,7 @@ class FakeXiaozhiWebSocketClient @Inject constructor(
         }
         delay(60)
         val incoming = "{\"session_id\":\"$currentSession\",\"type\":\"mcp\",\"payload\":$payloadJson}"
-        val event = messageRouter.routeText(incoming)
+        val event = messageRouter.routeText(incoming, fakeContext(currentSession))
         val responseJson = if (event is ProtocolEvent.McpResponse) {
             messageBuilder.mcp(currentSession, event.responseJson)
         } else {
@@ -200,6 +201,12 @@ class FakeXiaozhiWebSocketClient @Inject constructor(
         incomingJson = null,
         event = ProtocolEvent.Error("Fake WebSocket 未连接"),
         message = "Fake WebSocket 未连接",
+    )
+
+    private fun fakeContext(sessionId: String?): McpToolContext = McpToolContext(
+        source = McpToolContext.SOURCE_LOCAL_TOOL_SIMULATOR,
+        runtimeMode = "fake",
+        sessionId = sessionId,
     )
 }
 

@@ -28,7 +28,10 @@ class McpProtocolClient @Inject constructor(
 
     fun toolsList(): List<McpToolDescriptor> = activeExecutor().listDescriptors()
 
-    fun handleJsonRpc(payloadJson: String): McpProtocolResponse {
+    fun handleJsonRpc(
+        payloadJson: String,
+        context: McpToolContext = McpToolContext(),
+    ): McpProtocolResponse {
         val request = McpJsonRpcMapper.parseRequest(payloadJson).getOrElse { error ->
             return McpProtocolResponse.error(
                 requestIdJson = null,
@@ -61,7 +64,7 @@ class McpProtocolClient @Inject constructor(
                     descriptors = toolsList(),
                 ),
             )
-            "tools/call" -> handleToolsCall(request.payload, request.requestIdJson, request.method)
+            "tools/call" -> handleToolsCall(request.payload, request.requestIdJson, request.method, context)
             else -> McpProtocolResponse.error(
                 requestIdJson = request.requestIdJson,
                 method = request.method,
@@ -72,12 +75,16 @@ class McpProtocolClient @Inject constructor(
         }
     }
 
-    fun handleToolCall(toolName: String, argumentsJson: String): McpToolResult = runBlocking {
+    fun handleToolCall(
+        toolName: String,
+        argumentsJson: String,
+        context: McpToolContext = McpToolContext(),
+    ): McpToolResult = runBlocking {
         toolCallEventStore.markRunning(toolName, argumentsJson)
         val result = activeExecutor().execute(
             name = toolName,
             argumentsJson = argumentsJson,
-            context = McpToolContext(),
+            context = context,
         ).withToolNameIfMissing(toolName)
         toolCallEventStore.markCompleted(result)
         result
@@ -87,6 +94,7 @@ class McpProtocolClient @Inject constructor(
         payload: JSONObject,
         requestIdJson: String?,
         method: String,
+        context: McpToolContext,
     ): McpProtocolResponse {
         val call = McpJsonRpcMapper.parseToolCall(payload).getOrElse { error ->
             val result = McpToolResult.failed(
@@ -114,7 +122,7 @@ class McpProtocolClient @Inject constructor(
             activeExecutor().execute(
                 name = call.toolName,
                 argumentsJson = call.argumentsJson,
-                context = McpToolContext(requestIdJson = call.requestIdJson),
+                context = context.copy(requestIdJson = call.requestIdJson),
             ).withToolNameIfMissing(call.toolName)
         }
         toolCallEventStore.markCompleted(result)
