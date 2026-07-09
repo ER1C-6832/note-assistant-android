@@ -18,7 +18,7 @@ class NoteReferenceResolver @Inject constructor(
             .filterDone(request.includeDone)
             .distinctBy { it.id }
 
-        val exactTitle = request.exactTitle.cleanVoiceReference()
+        val exactTitle = request.exactTitle.toAssistantReferenceText()
         if (exactTitle.isBlank() && request.query.isBroadNoteListRequest()) {
             val notes = pool.sortedByRecent()
             return NoteResolveResult(
@@ -36,7 +36,10 @@ class NoteReferenceResolver @Inject constructor(
 
         if (exactTitle.isNotBlank()) {
             val titleResult = resolveTitle(pool, exactTitle, request.limit)
-            if (titleResult.matches.isNotEmpty()) return titleResult
+            if (titleResult.matches.isNotEmpty()) return titleResult.copy(
+                requestedText = request.query.ifBlank { request.exactTitle },
+                normalizedText = exactTitle,
+            )
         }
 
         for (term in searchTerms) {
@@ -101,6 +104,19 @@ class NoteReferenceResolver @Inject constructor(
         limit: Int,
     ): NoteResolveResult {
         val normalized = text.visibleTitleNormalize()
+        if (normalized.isBlank()) {
+            return NoteResolveResult(
+                requestedText = text,
+                normalizedText = text,
+                strategy = "title_blank",
+                totalMatches = 0,
+                matches = emptyList(),
+                resultIsLimited = false,
+                scores = emptyMap(),
+                matchedFields = emptyMap(),
+                poolSize = notes.size,
+            )
+        }
         val exact = notes.filter { it.title.visibleTitleNormalize() == normalized }
             .sortedByRecent()
         if (exact.isNotEmpty()) {
@@ -191,7 +207,7 @@ data class NoteResolveResult(
         totalMatches == 0 -> "No matching note was found. Stop calling list/search tools and ask the user for a more visible title or a different keyword."
         strategy == "broad_list_intent" -> "The user asked for a list. The results are already returned; summarize them or show the list UI instead of searching again."
         resultIsLimited -> "Too many notes matched. Ask the user to narrow the title or query before any mutation."
-        matches.size == 1 -> "Exactly one note matched. For mutation tools, pass note_ref/title from this item or its note_id from this exact result."
+        matches.size == 1 -> "Exactly one note matched. For mutation tools, prefer note_ref/title from this item; note_id may be used only if it came from this exact result."
         else -> "Multiple notes matched. If the user asked for all related notes, use a high-risk tool with query and allow_multiple=true so the app can show a confirmation preview. Otherwise ask the user to clarify."
     }
 }

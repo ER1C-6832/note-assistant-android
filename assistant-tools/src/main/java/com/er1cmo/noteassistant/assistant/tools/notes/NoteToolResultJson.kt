@@ -6,7 +6,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 internal const val ASSISTANT_NOTE_REFERENCE_RULE: String =
-    "note_id is an internal app id from this tool result. For user-visible speech such as title '1', prefer note_ref/note_title/title/query and do not invent note_id from spoken numbers."
+    "note_id is an internal app id from this tool result. For user-visible speech such as title '1' or keyword '手柄', prefer note_ref/note_title/title/query. Do not invent note_id from spoken numbers, and do not reuse an old note_id if the current user reference points to a different note."
 
 private const val NOTE_CONTENT_LIMIT = 1200
 private const val NOTE_SNIPPET_LIMIT = 160
@@ -47,8 +47,11 @@ private fun Note.userVisibleReferenceJson(visibleTitle: String): JSONObject = JS
     .put("preferred_ref", visibleTitle)
     .put("safe_read_arguments", JSONObject().put("note_ref", visibleTitle).put("scope", "all"))
     .put("safe_delete_arguments", JSONObject().put("note_ref", visibleTitle))
+    .put("safe_toggle_done_arguments", JSONObject().put("note_ref", visibleTitle).put("done", true).put("auto_convert_to_todo", true))
+    .put("safe_convert_type_arguments", JSONObject().put("note_ref", visibleTitle).put("target_type", "todo"))
+    .put("safe_append_arguments", JSONObject().put("note_ref", visibleTitle))
     .put("internal_note_id", id)
-    .put("internal_id_rule", "Use note_id only if it came from this exact result, not from a spoken title or number.")
+    .put("internal_id_rule", "Use note_id only if it came from this exact result and the current user-visible reference still points to the same note.")
 
 private fun NoteType.storageValue(): String = when (this) {
     NoteType.Normal -> "normal"
