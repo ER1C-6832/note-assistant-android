@@ -10,6 +10,7 @@ import com.er1cmo.noteassistant.assistant.mcpbase.McpToolExecutor
 import com.er1cmo.noteassistant.assistant.mcpbase.McpToolResult
 import com.er1cmo.noteassistant.assistant.mcpbase.McpToolStatus
 import com.er1cmo.noteassistant.assistant.mcpbase.putIdJson
+import com.er1cmo.noteassistant.assistant.runtime.toolcall.ToolCallEventStore
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.jvm.JvmSuppressWildcards
@@ -19,8 +20,9 @@ import org.json.JSONObject
 @Singleton
 class McpProtocolClient @Inject constructor(
     private val executors: Set<@JvmSuppressWildcards McpToolExecutor>,
+    private val toolCallEventStore: ToolCallEventStore,
 ) {
-    constructor() : this(emptySet())
+    constructor() : this(emptySet(), ToolCallEventStore())
 
     private val failClosedExecutor = FailClosedMcpToolExecutor()
 
@@ -71,11 +73,14 @@ class McpProtocolClient @Inject constructor(
     }
 
     fun handleToolCall(toolName: String, argumentsJson: String): McpToolResult = runBlocking {
-        activeExecutor().execute(
+        toolCallEventStore.markRunning(toolName, argumentsJson)
+        val result = activeExecutor().execute(
             name = toolName,
             argumentsJson = argumentsJson,
             context = McpToolContext(),
         ).withToolNameIfMissing(toolName)
+        toolCallEventStore.markCompleted(result)
+        result
     }
 
     private fun handleToolsCall(
@@ -88,6 +93,11 @@ class McpProtocolClient @Inject constructor(
                 message = error.message ?: "tools/call 参数无效",
                 errorCode = McpToolResult.ERROR_VALIDATION,
             )
+            toolCallEventStore.markFailed(
+                toolName = null,
+                message = result.message,
+                errorCode = result.errorCode,
+            )
             return McpProtocolResponse(
                 requestIdJson = requestIdJson,
                 method = method,
@@ -99,6 +109,7 @@ class McpProtocolClient @Inject constructor(
             )
         }
 
+        toolCallEventStore.markRunning(call.toolName, call.argumentsJson)
         val result = runBlocking {
             activeExecutor().execute(
                 name = call.toolName,
@@ -106,6 +117,7 @@ class McpProtocolClient @Inject constructor(
                 context = McpToolContext(requestIdJson = call.requestIdJson),
             ).withToolNameIfMissing(call.toolName)
         }
+        toolCallEventStore.markCompleted(result)
         return McpProtocolResponse(
             requestIdJson = call.requestIdJson,
             method = method,

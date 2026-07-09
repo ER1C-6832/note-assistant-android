@@ -65,6 +65,9 @@ import com.er1cmo.noteassistant.assistant.runtime.state.AssistantConnectionStatu
 import com.er1cmo.noteassistant.assistant.runtime.state.AssistantPhase
 import com.er1cmo.noteassistant.assistant.runtime.state.AssistantRuntimeMode
 import com.er1cmo.noteassistant.assistant.runtime.state.AssistantState
+import com.er1cmo.noteassistant.assistant.runtime.toolcall.ToolCallEventStore
+import com.er1cmo.noteassistant.assistant.runtime.toolcall.ToolCallUiState
+import com.er1cmo.noteassistant.assistant.runtime.toolcall.ToolCallUiStatus
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -100,7 +103,14 @@ fun AssistantEntryOverlay(
     Column(
         modifier = modifier,
         horizontalAlignment = Alignment.End,
+        verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
+        if (uiState.toolCall.visible) {
+            AssistantOperationBanner(
+                toolCall = uiState.toolCall,
+                onDismiss = viewModel::dismissToolCall,
+            )
+        }
         if (uiState.expanded) {
             AssistantExpandedPanel(
                 uiState = uiState,
@@ -120,7 +130,6 @@ fun AssistantEntryOverlay(
                 },
                 onStopPtt = viewModel::stopPushToTalk,
             )
-            Spacer(Modifier.height(10.dp))
         }
         CompactAssistantAuroraButton(
             uiState = uiState,
@@ -306,6 +315,62 @@ private fun CompactAssistantAuroraButton(
 }
 
 @Composable
+private fun AssistantOperationBanner(
+    toolCall: ToolCallUiState,
+    onDismiss: () -> Unit,
+) {
+    val accent = toolCall.status.bannerAccent()
+    Surface(
+        modifier = Modifier.width(306.dp),
+        shape = RoundedCornerShape(22.dp),
+        color = Color(0xFF111827).copy(alpha = 0.88f),
+        shadowElevation = 10.dp,
+        tonalElevation = 8.dp,
+        border = androidx.compose.foundation.BorderStroke(1.dp, accent.copy(alpha = 0.46f)),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(10.dp)
+                    .clip(CircleShape)
+                    .background(accent),
+            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = toolCall.message,
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    color = Color.White.copy(alpha = 0.88f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                val detail = toolCall.detailLine()
+                if (detail.isNotBlank()) {
+                    Text(
+                        text = detail,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color.White.copy(alpha = 0.58f),
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+            TextButton(onClick = onDismiss) {
+                Text(
+                    text = "隐藏",
+                    color = Color.White.copy(alpha = 0.62f),
+                    style = MaterialTheme.typography.labelSmall,
+                )
+            }
+        }
+    }
+}
+
+@Composable
 private fun AssistantExpandedPanel(
     uiState: AssistantEntryUiState,
     onCollapse: () -> Unit,
@@ -362,6 +427,10 @@ private fun AssistantExpandedPanel(
                 AssistantStatusChip(uiState.connectionLabel)
                 AssistantStatusChip(uiState.activationLabel)
                 AssistantStatusChip(uiState.audioLabel)
+            }
+
+            if (uiState.toolCall.visible) {
+                InlineToolCallSummary(uiState.toolCall)
             }
 
             if (!uiState.state.lastAssistantText.isNullOrBlank()) {
@@ -464,6 +533,42 @@ private fun AssistantExpandedPanel(
 }
 
 @Composable
+private fun InlineToolCallSummary(toolCall: ToolCallUiState) {
+    val accent = toolCall.status.bannerAccent()
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = accent.copy(alpha = 0.14f),
+        border = androidx.compose.foundation.BorderStroke(1.dp, accent.copy(alpha = 0.28f)),
+    ) {
+        Column(Modifier.padding(10.dp)) {
+            Text(
+                text = "最近工具调用",
+                style = MaterialTheme.typography.labelMedium,
+                color = accent,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text(
+                text = toolCall.message,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            val detail = toolCall.detailLine()
+            if (detail.isNotBlank()) {
+                Text(
+                    text = detail,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+    }
+}
+
+@Composable
 private fun AssistantStatusChip(text: String) {
     Surface(
         shape = RoundedCornerShape(999.dp),
@@ -480,6 +585,7 @@ private fun AssistantStatusChip(text: String) {
 
 data class AssistantEntryUiState(
     val state: AssistantState,
+    val toolCall: ToolCallUiState,
     val expanded: Boolean,
     val inputText: String,
 ) {
@@ -519,17 +625,20 @@ data class AssistantEntryUiState(
 @HiltViewModel
 class AssistantEntryViewModel @Inject constructor(
     private val assistantController: AssistantController,
+    private val toolCallEventStore: ToolCallEventStore,
 ) : ViewModel() {
     private val expanded = MutableStateFlow(false)
     private val inputText = MutableStateFlow("小智，帮我创建一条测试便签")
 
     val uiState: StateFlow<AssistantEntryUiState> = combine(
         assistantController.state,
+        toolCallEventStore.state,
         expanded,
         inputText,
-    ) { state, expandedValue, input ->
+    ) { state, toolCall, expandedValue, input ->
         AssistantEntryUiState(
             state = state,
+            toolCall = toolCall,
             expanded = expandedValue,
             inputText = input,
         )
@@ -538,6 +647,7 @@ class AssistantEntryViewModel @Inject constructor(
         started = SharingStarted.WhileSubscribed(5_000),
         initialValue = AssistantEntryUiState(
             state = assistantController.state.value,
+            toolCall = toolCallEventStore.state.value,
             expanded = false,
             inputText = inputText.value,
         ),
@@ -549,6 +659,10 @@ class AssistantEntryViewModel @Inject constructor(
 
     fun collapse() {
         expanded.value = false
+    }
+
+    fun dismissToolCall() {
+        toolCallEventStore.clear()
     }
 
     fun setInputText(value: String) {
@@ -713,6 +827,25 @@ private fun AssistantState.toAuroraTarget(): AuroraTarget {
             motion = AuroraMotion.Disabled,
         )
     }
+}
+
+private fun ToolCallUiStatus.bannerAccent(): Color = when (this) {
+    ToolCallUiStatus.Idle -> ColorSlateGray
+    ToolCallUiStatus.Running -> ColorMistyBlue
+    ToolCallUiStatus.Success -> Color(0xFF22C55E)
+    ToolCallUiStatus.RequiresConfirmation -> ColorSunsetAmber
+    ToolCallUiStatus.PartialSuccess -> ColorLilac
+    ToolCallUiStatus.Failed -> ColorRoseRed
+    ToolCallUiStatus.Blocked -> ColorRoseRed
+    ToolCallUiStatus.NotImplemented -> ColorSlateGray
+}
+
+private fun ToolCallUiState.detailLine(): String {
+    val name = toolName.orEmpty()
+    val base = detail.orEmpty()
+    return listOf(name, base)
+        .filter { it.isNotBlank() }
+        .joinToString("  ")
 }
 
 private fun DrawScope.drawFeatheredAuroraBlob(
