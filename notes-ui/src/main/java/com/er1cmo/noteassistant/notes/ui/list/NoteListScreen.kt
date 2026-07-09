@@ -31,7 +31,6 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -50,7 +49,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.painterResource
@@ -91,7 +89,6 @@ fun NoteListRoute(
         onCreateClick = onCreateClick,
         onNoteClick = onNoteClick,
         onSettingsClick = onSettingsClick,
-        onVoiceClick = {},
         onTodoCheckedChange = viewModel::toggleTodoDone,
         onBatchSetPinned = viewModel::setPinned,
         onBatchSetDone = viewModel::setTodoDone,
@@ -112,7 +109,6 @@ fun NoteListScreen(
     onCreateClick: (String?) -> Unit,
     onNoteClick: (Long) -> Unit,
     onSettingsClick: () -> Unit,
-    onVoiceClick: () -> Unit,
     onTodoCheckedChange: (Long, Boolean) -> Unit,
     onBatchSetPinned: (Set<Long>, Boolean) -> Unit,
     onBatchSetDone: (Set<Long>, Boolean) -> Unit,
@@ -326,19 +322,6 @@ fun NoteListScreen(
                     ) { Text("+ 新建") }
                 }
 
-                if (!selectionMode) {
-                    FloatingActionButton(
-                        onClick = onVoiceClick,
-                        modifier = Modifier
-                            .align(Alignment.BottomEnd)
-                            .padding(end = 22.dp, bottom = 74.dp)
-                            .size(58.dp)
-                            .shadow(8.dp, CircleShape),
-                        shape = CircleShape,
-                        containerColor = Color(0xFF5E6FFF),
-                        contentColor = Color.White,
-                    ) { Box(Modifier.size(22.dp)) }
-                }
 
                 if (selectionMode) {
                     SelectionFloatingBar(
