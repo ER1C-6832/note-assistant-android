@@ -13,8 +13,10 @@ import com.er1cmo.noteassistant.assistant.tools.notes.NotesCreateTool
 import com.er1cmo.noteassistant.assistant.tools.notes.NotesDeleteTool
 import com.er1cmo.noteassistant.assistant.tools.notes.NotesGetTool
 import com.er1cmo.noteassistant.assistant.tools.notes.NotesListArchivedTool
+import com.er1cmo.noteassistant.assistant.tools.notes.NotesListByTagTool
 import com.er1cmo.noteassistant.assistant.tools.notes.NotesListDeletedTool
 import com.er1cmo.noteassistant.assistant.tools.notes.NotesListDoneTool
+import com.er1cmo.noteassistant.assistant.tools.notes.NotesListPinnedTool
 import com.er1cmo.noteassistant.assistant.tools.notes.NotesListRecentTool
 import com.er1cmo.noteassistant.assistant.tools.notes.NotesListTodosTool
 import com.er1cmo.noteassistant.assistant.tools.notes.NotesPinTool
@@ -69,6 +71,8 @@ abstract class AssistantToolsModule {
     @Binds @IntoSet abstract fun bindNotesListDeletedTool(tool: NotesListDeletedTool): McpTool
     @Binds @IntoSet abstract fun bindNotesListTodosTool(tool: NotesListTodosTool): McpTool
     @Binds @IntoSet abstract fun bindNotesListDoneTool(tool: NotesListDoneTool): McpTool
+    @Binds @IntoSet abstract fun bindNotesListPinnedTool(tool: NotesListPinnedTool): McpTool
+    @Binds @IntoSet abstract fun bindNotesListByTagTool(tool: NotesListByTagTool): McpTool
 
     @Binds @IntoSet abstract fun bindUiOpenNoteTool(tool: UiOpenNoteTool): McpTool
     @Binds @IntoSet abstract fun bindUiShowConfirmationTool(tool: UiShowConfirmationTool): McpTool
