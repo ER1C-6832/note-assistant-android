@@ -406,12 +406,9 @@ class LocalAssistantController @Inject constructor(
             mutableState.value = stateMachine.error(mutableState.value, listenStart.message, nowMillis())
             return
         }
-        val audioStart = realAudioEngine.startRecording(
-            nowMillis = nowMillis(),
-            onEncodedFrame = { packet ->
-                fakeWebSocketClient.sendAudioFrame(packet).success
-            },
-        )
+        val audioStart = realAudioEngine.startRecording(nowMillis()) { packet ->
+            fakeWebSocketClient.sendAudioFrame(packet).success
+        }
         if (!audioStart.started) {
             mutableState.value = stateMachine.error(mutableState.value.copy(audio = AssistantAudioStatus.Error), audioStart.summary, nowMillis()).copy(lastAudioSummary = audioStart.summary)
             return
@@ -445,14 +442,11 @@ class LocalAssistantController @Inject constructor(
             return
         }
         realUploadedAudioFrames = 0
-        val audioStart = realAudioEngine.startRecording(
-            nowMillis = nowMillis(),
-            onEncodedFrame = { packet ->
-                val ok = realWebSocketClient.sendAudioFrame(packet)
-                if (ok) realUploadedAudioFrames += 1
-                ok
-            },
-        )
+        val audioStart = realAudioEngine.startRecording(nowMillis()) { packet ->
+            val ok = realWebSocketClient.sendAudioFrame(packet)
+            if (ok) realUploadedAudioFrames += 1
+            ok
+        }
         if (!audioStart.started) {
             mutableState.value = stateMachine.error(mutableState.value.copy(audio = AssistantAudioStatus.Error), audioStart.summary, nowMillis()).copy(
                 runtimeMode = AssistantRuntimeMode.Real,
