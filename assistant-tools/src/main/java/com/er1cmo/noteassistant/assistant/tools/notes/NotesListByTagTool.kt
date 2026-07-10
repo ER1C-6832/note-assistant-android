@@ -19,7 +19,8 @@ class NotesListByTagTool @Inject constructor(
     private val uiCommandBus: UiCommandBus,
 ) : McpTool {
     override val name: String = "notes.list_by_tag"
-    override val description: String = "按标签列出便签，并同步显示标签过滤列表。"
+    override val description: String =
+        "只读地按标签列出便签，并同步显示标签过滤列表。如果同一句话要求归档/取消归档，不要先调用本工具；直接调用 notes.archive 并传 tag_name。"
     override val riskLevel: McpRiskLevel = McpRiskLevel.Low
     override val descriptor: McpToolDescriptor = McpToolDescriptor(
         name = name,
@@ -41,7 +42,11 @@ class NotesListByTagTool @Inject constructor(
         riskLevel = McpRiskLevel.Low,
         mutates = false,
         confirmation = McpToolDescriptor.CONFIRMATION_NOT_REQUIRED,
-        examples = listOf("列出客户标签下的便签", "列出 tag_id=3 的便签"),
+        examples = listOf(
+            "列出客户标签下的便签",
+            "列出 tag_id=3 的便签",
+            "若用户说‘把客户标签下那一条归档’，应改用 notes.archive {\"tag_name\":\"客户\",\"archived\":true}",
+        ),
     )
 
     override suspend fun call(argumentsJson: String): McpToolResult = call(argumentsJson, McpToolContext())
@@ -81,6 +86,18 @@ class NotesListByTagTool @Inject constructor(
             .take(limit)
 
         uiCommandBus.emit(UiCommand.ShowTag(tagId = tagId, tagName = tagName))
+        val tagLabel = tagName.takeIf { it.isNotBlank() }?.let { "#$it" } ?: "ID=$tagId"
+        val nextStepHint = when (notes.size) {
+            0 -> "No note has this tag in the requested scope. Stop; do not reinterpret the tag name as a note title."
+            1 -> "Exactly one tagged note was returned. If the user also wants to archive it, call notes.archive with tag_name=$tagName and archived=true. Do not replace the tag condition with a title keyword or an older note_id."
+            else -> "Multiple tagged notes were returned. For archive, call notes.archive with tag_name=$tagName only when the user explicitly says all/所有 and set allow_multiple=true; otherwise ask for a title."
+        }
+        val archiveHandoff = JSONObject()
+            .put("tool", "notes.archive")
+            .put("tag_name", tagName.ifBlank { JSONObject.NULL })
+            .put("rule", "Tag identity remains authoritative. Do not convert tag_name into a title query.")
+            .put("single_match_arguments", JSONObject().put("tag_name", tagName).put("archived", true))
+            .put("all_matches_arguments", JSONObject().put("tag_name", tagName).put("allow_multiple", true).put("archived", true))
         val resultJson = JSONObject()
             .putAssistantNoteReferenceRule()
             .put("kind", "by_tag")
@@ -89,10 +106,11 @@ class NotesListByTagTool @Inject constructor(
             .put("count", notes.size)
             .put("results", notes.toAssistantNoteResultsJsonArray())
             .put("ui_effect", "show_tag")
-            .put("assistant_next_step_hint", "Tag notes were listed and the tag UI was shown. Do not call an extra ui.show_tag tool.")
+            .put("archive_handoff", archiveHandoff)
+            .put("assistant_next_step_hint", nextStepHint)
             .toString()
         return McpToolResult.success(
-            message = "已列出 ${notes.size} 条标签便签",
+            message = notes.toAssistantReadableListMessage("标签 $tagLabel 下的便签"),
             resultJson = resultJson,
             toolName = name,
             risk = McpRiskLevel.Low,
