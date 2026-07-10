@@ -73,6 +73,12 @@ class WakeWordForegroundService : Service() {
                 START_STICKY
             }
 
+            ACTION_ASSISTANT_STATUS -> {
+                val status = reason.ifBlank { "唤醒词已交接给语音助手" }
+                startAsForeground(buildNotification(status, currentConfig, true))
+                START_STICKY
+            }
+
             ACTION_START,
             ACTION_RESUME,
             ACTION_UPDATE,
@@ -261,6 +267,7 @@ class WakeWordForegroundService : Service() {
         const val ACTION_PAUSE = "com.er1cmo.noteassistant.wakeword.PAUSE"
         const val ACTION_RESUME = "com.er1cmo.noteassistant.wakeword.RESUME"
         const val ACTION_STOP = "com.er1cmo.noteassistant.wakeword.STOP"
+        const val ACTION_ASSISTANT_STATUS = "com.er1cmo.noteassistant.wakeword.ASSISTANT_STATUS"
         private const val ACTION_RESTORE = "com.er1cmo.noteassistant.wakeword.RESTORE"
         const val EXTRA_REASON = "reason"
 
@@ -274,6 +281,8 @@ class WakeWordForegroundService : Service() {
             baseIntent(context, ACTION_PAUSE).putExtra(EXTRA_REASON, reason)
         fun stopIntent(context: Context, reason: String): Intent =
             baseIntent(context, ACTION_STOP).putExtra(EXTRA_REASON, reason)
+        fun assistantStatusIntent(context: Context, status: String): Intent =
+            baseIntent(context, ACTION_ASSISTANT_STATUS).putExtra(EXTRA_REASON, status)
 
         private fun baseIntent(context: Context, action: String): Intent =
             Intent(context, WakeWordForegroundService::class.java).setAction(action)

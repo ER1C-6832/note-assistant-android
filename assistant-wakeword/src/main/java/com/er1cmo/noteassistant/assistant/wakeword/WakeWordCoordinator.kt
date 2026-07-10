@@ -127,7 +127,7 @@ class WakeWordCoordinator @Inject constructor(
                     it.copy(
                         serviceState = WakeWordServiceState.Detected,
                         microphoneOwner = WakeWordMicrophoneOwner.None,
-                        lastStatus = "已唤醒：${event.rawKeyword}；Phase5-01 暂不启动助手对话",
+                        lastStatus = "已唤醒：${event.rawKeyword}；正在交接流式对话",
                         lastDetectedKeyword = event.rawKeyword,
                         lastDetectionLatencyMs = event.latencyMs,
                         errorMessage = null,

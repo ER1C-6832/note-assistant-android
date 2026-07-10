@@ -88,6 +88,10 @@ class WakeWordServiceController @Inject constructor(
         )
     }
 
+    fun showAssistantStatus(status: String) {
+        context.startService(WakeWordForegroundService.assistantStatusIntent(context, status))
+    }
+
     suspend fun markFalseTrigger() {
         settingsRepository.markFalseTrigger()
     }

@@ -1,6 +1,7 @@
 package com.er1cmo.noteassistant.assistant.runtime.network
 
 import com.er1cmo.noteassistant.assistant.mcpbase.McpToolContext
+import com.er1cmo.noteassistant.assistant.runtime.context.AssistantTurnContextStore
 import com.er1cmo.noteassistant.assistant.runtime.protocol.ProtocolEvent
 import com.er1cmo.noteassistant.assistant.runtime.protocol.XiaozhiMessageBuilder
 import com.er1cmo.noteassistant.assistant.runtime.protocol.XiaozhiMessageRouter
@@ -24,6 +25,7 @@ import okio.ByteString.Companion.toByteString
 class XiaozhiWebSocketClient @Inject constructor(
     private val messageBuilder: XiaozhiMessageBuilder,
     private val messageRouter: XiaozhiMessageRouter,
+    private val assistantTurnContextStore: AssistantTurnContextStore,
 ) {
     private val httpClient = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
@@ -202,11 +204,15 @@ class XiaozhiWebSocketClient @Inject constructor(
         require(config.clientId.isNotBlank()) { "Client ID 未生成" }
     }
 
-    private fun realContext(sessionId: String?): McpToolContext = McpToolContext(
-        source = McpToolContext.SOURCE_VOICE,
-        runtimeMode = "real",
-        sessionId = sessionId,
-    )
+    private fun realContext(sessionId: String?): McpToolContext {
+        val turnContext = assistantTurnContextStore.current()
+        return McpToolContext(
+            source = assistantTurnContextStore.currentMcpSource(),
+            runtimeMode = "real",
+            conversationId = turnContext?.conversationId,
+            sessionId = sessionId,
+        )
+    }
 
     private companion object {
         const val HELLO_TIMEOUT_MS = 8_000L

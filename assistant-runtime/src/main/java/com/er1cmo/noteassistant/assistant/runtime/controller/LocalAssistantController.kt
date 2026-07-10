@@ -13,6 +13,7 @@ import com.er1cmo.noteassistant.assistant.runtime.activation.OtaActivationClient
 import com.er1cmo.noteassistant.assistant.runtime.activation.OtaActivationState
 import com.er1cmo.noteassistant.assistant.runtime.audio.RealAudioEngine
 import com.er1cmo.noteassistant.assistant.runtime.conversation.ConversationStateMachine
+import com.er1cmo.noteassistant.assistant.runtime.context.AssistantTurnContextStore
 import com.er1cmo.noteassistant.assistant.runtime.identity.DeviceIdentityManager
 import com.er1cmo.noteassistant.assistant.runtime.network.FakeXiaozhiWebSocketClient
 import com.er1cmo.noteassistant.assistant.runtime.network.XiaozhiConnectionConfig
@@ -57,6 +58,7 @@ class LocalAssistantController @Inject constructor(
     private val voiceConversationSettingsRepository: VoiceConversationSettingsRepository,
     private val microphoneOwnershipCoordinator: MicrophoneOwnershipCoordinator,
     private val wakeWordAudioGate: WakeWordAudioGate,
+    private val assistantTurnContextStore: AssistantTurnContextStore,
     private val reconnectPolicy: ReconnectPolicy,
 ) : AssistantController {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -111,6 +113,7 @@ class LocalAssistantController @Inject constructor(
         stopStreamingConversationInternal("assistant_disabled", resumeWakeWord = false)
         releaseAssistantMicrophone("assistant_disabled", resumeWakeWord = false)
         settingsRepository.setAssistantEnabled(false)
+        assistantTurnContextStore.clear()
         realAudioEngine.cancel()
         fakeWebSocketClient.close("assistant_disabled")
         realWebSocketClient.close("assistant_disabled")
@@ -372,6 +375,10 @@ class LocalAssistantController @Inject constructor(
             stopStreamingConversationInternal("switch_to_push_to_talk", resumeWakeWord = false)
         }
         if (!prepareAssistantCapture(AssistantEntrySource.PushToTalk, "push_to_talk")) return
+        assistantTurnContextStore.beginSession(
+            entrySource = AssistantEntrySource.PushToTalk,
+            conversationId = "ptt-${UUID.randomUUID()}",
+        )
         if (pttGeneration != generation) {
             releaseAssistantMicrophone("push_to_talk_released_before_start", resumeWakeWord = true)
             return
@@ -389,6 +396,7 @@ class LocalAssistantController @Inject constructor(
             }
         }
         if (!realAudioEngine.isRecording()) {
+            assistantTurnContextStore.clear()
             releaseAssistantMicrophone("push_to_talk_start_failed_or_released", resumeWakeWord = true)
         } else {
             mutableState.value = mutableState.value.copy(
@@ -603,12 +611,18 @@ class LocalAssistantController @Inject constructor(
         pttWakeWordResumeJob?.cancel()
         streamingGeneration += 1L
         val generation = streamingGeneration
+        val conversationSessionId = UUID.randomUUID().toString()
+        assistantTurnContextStore.beginSession(
+            entrySource = source,
+            conversationId = conversationSessionId,
+            wakeKeyword = wakeKeyword,
+        )
         mutableState.value = mutableState.value.copy(
             preferredVoiceMode = VoiceInteractionMode.StreamingConversation,
             activeEntrySource = source,
             streamingConversationState = StreamingConversationState.Starting,
             streamingSessionActive = true,
-            streamingSessionId = UUID.randomUUID().toString(),
+            streamingSessionId = conversationSessionId,
             streamingTurnIndex = 0,
             vadState = VoiceActivityState.Warmup,
             vadStatusText = "流式对话正在准备第一轮",
@@ -851,6 +865,15 @@ class LocalAssistantController @Inject constructor(
             realWebSocketClient.sendStopListening(::handleRealWebSocketEvent)
         }
         releaseAssistantMicrophone("streaming_stopped:$reason", resumeWakeWord = false)
+        val stoppedConversationId = mutableState.value.streamingSessionId
+        if (stoppedConversationId != null) {
+            assistantTurnContextStore.clear(stoppedConversationId)
+        } else if (
+            mutableState.value.activeEntrySource == AssistantEntrySource.WakeWord ||
+            mutableState.value.activeEntrySource == AssistantEntrySource.StreamingButton
+        ) {
+            assistantTurnContextStore.clear()
+        }
         mutableState.value = mutableState.value.copy(
             phase = if (mutableState.value.isConnected) AssistantPhase.Connected else AssistantPhase.Idle,
             audio = AssistantAudioStatus.Idle,
@@ -924,6 +947,7 @@ class LocalAssistantController @Inject constructor(
         pttWakeWordResumeJob = scope.launch {
             delay(delayMs)
             if (!mutableState.value.streamingSessionActive && !realAudioEngine.isRecording()) {
+                assistantTurnContextStore.clear()
                 mutableState.value = mutableState.value.copy(activeEntrySource = null)
                 wakeWordAudioGate.resumeAfterAssistant("按住说话回复已完成或超时")
             }
