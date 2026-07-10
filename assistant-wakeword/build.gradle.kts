@@ -28,6 +28,7 @@ kapt {
 }
 
 dependencies {
+    implementation(project(":core-common"))
     implementation(project(":app-settings"))
     implementation(libs.androidx.core.ktx)
     implementation(libs.kotlinx.coroutines.android)

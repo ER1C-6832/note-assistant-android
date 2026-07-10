@@ -1,5 +1,7 @@
 package com.er1cmo.noteassistant.assistant.runtime.state
 
+import com.er1cmo.noteassistant.core.common.audio.MicrophoneOwner
+
 enum class AssistantPhase(val storageValue: String) {
     Idle("idle"),
     Disabled("disabled"),
@@ -81,6 +83,16 @@ data class AssistantState(
     val lastToolStatus: String? = null,
     val lastCommandLogId: Long? = null,
     val lastConfirmationId: String? = null,
+    val preferredVoiceMode: VoiceInteractionMode = VoiceInteractionMode.StreamingConversation,
+    val activeEntrySource: AssistantEntrySource? = null,
+    val microphoneOwner: MicrophoneOwner = MicrophoneOwner.None,
+    val streamingConversationState: StreamingConversationState = StreamingConversationState.Inactive,
+    val streamingSessionActive: Boolean = false,
+    val streamingSessionId: String? = null,
+    val streamingTurnIndex: Int = 0,
+    val streamingIdleTimeoutMs: Long = 15_000L,
+    val vadState: VoiceActivityState = VoiceActivityState.Disabled,
+    val vadStatusText: String = "VAD 未启用",
 ) {
     val isConnected: Boolean
         get() = connection == AssistantConnectionStatus.Connected && sessionId != null

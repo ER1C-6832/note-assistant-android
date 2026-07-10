@@ -14,6 +14,8 @@ import android.os.Build
 import android.os.IBinder
 import androidx.core.content.ContextCompat
 import com.er1cmo.noteassistant.app.settings.WakeWordSettingsRepository
+import com.er1cmo.noteassistant.core.common.audio.MicrophoneOwner
+import com.er1cmo.noteassistant.core.common.audio.MicrophoneOwnershipCoordinator
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
@@ -21,11 +23,13 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 
 @AndroidEntryPoint
 class WakeWordForegroundService : Service() {
     @Inject lateinit var settingsRepository: WakeWordSettingsRepository
     @Inject lateinit var coordinator: WakeWordCoordinator
+    @Inject lateinit var microphoneOwnershipCoordinator: MicrophoneOwnershipCoordinator
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var engine: SherpaWakeWordEngine? = null
@@ -47,6 +51,7 @@ class WakeWordForegroundService : Service() {
                 val stopReason = reason.ifBlank { "本地唤醒词服务已关闭" }
                 serviceScope.launch {
                     stopEngineAndAwait()
+                    microphoneOwnershipCoordinator.forceRelease(MicrophoneOwner.WakeWordKws, stopReason)
                     currentMode = ServiceMode.Stopped
                     coordinator.onServiceStopped(stopReason)
                     stopForeground(STOP_FOREGROUND_REMOVE)
@@ -60,6 +65,7 @@ class WakeWordForegroundService : Service() {
                 startAsForeground(buildNotification("唤醒词已暂停", currentConfig, true))
                 serviceScope.launch {
                     stopEngineAndAwait()
+                    microphoneOwnershipCoordinator.forceRelease(MicrophoneOwner.WakeWordKws, pauseReason)
                     currentMode = ServiceMode.Paused
                     coordinator.onServicePaused(pauseReason)
                     updateNotification("唤醒词已暂停", currentConfig, true)
@@ -81,8 +87,17 @@ class WakeWordForegroundService : Service() {
     }
 
     override fun onDestroy() {
+        // Do not join the engine from the main thread here. The engine's finally block
+        // publishes its final status on Dispatchers.Main; joining it inside onDestroy
+        // would deadlock that cleanup path.
         engine?.release()
         engine = null
+        runBlocking {
+            microphoneOwnershipCoordinator.forceRelease(
+                MicrophoneOwner.WakeWordKws,
+                "wakeword_service_destroyed",
+            )
+        }
         serviceScope.cancel()
         coordinator.onServiceStopped("本地唤醒词服务已销毁")
         super.onDestroy()
@@ -122,7 +137,12 @@ class WakeWordForegroundService : Service() {
 
     private suspend fun restartEngine(config: WakeWordConfig) {
         stopEngineAndAwait()
-        engine = SherpaWakeWordEngine(applicationContext, config, ::handleWakeWordEvent).also { it.start() }
+        engine = SherpaWakeWordEngine(
+            applicationContext,
+            config,
+            microphoneOwnershipCoordinator,
+            ::handleWakeWordEvent,
+        ).also { it.start() }
         currentMode = ServiceMode.Listening
     }
 
@@ -172,11 +192,7 @@ class WakeWordForegroundService : Service() {
 
     private fun startAsForeground(notification: Notification) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(
-                NOTIFICATION_ID,
-                notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE,
-            )
+            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
         } else {
             startForeground(NOTIFICATION_ID, notification)
         }
@@ -189,11 +205,7 @@ class WakeWordForegroundService : Service() {
         )
     }
 
-    private fun buildNotification(
-        title: String,
-        config: WakeWordConfig,
-        ongoing: Boolean,
-    ): Notification {
+    private fun buildNotification(title: String, config: WakeWordConfig, ongoing: Boolean): Notification {
         val launchIntent = packageManager.getLaunchIntentForPackage(packageName)?.apply {
             flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
         }
@@ -216,7 +228,7 @@ class WakeWordForegroundService : Service() {
             .setSmallIcon(R.drawable.ic_wakeword_notification)
             .setContentTitle(title)
             .setContentText("唤醒词：${config.phrase.displayText} · 灵敏度：${config.sensitivityLabel}")
-            .setSubText("小泓便签 · Phase5-01")
+            .setSubText("小泓便签 · Phase5-02 音频所有权")
             .setContentIntent(contentIntent)
             .setOngoing(ongoing)
             .setOnlyAlertOnce(true)
@@ -241,13 +253,7 @@ class WakeWordForegroundService : Service() {
         getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
     }
 
-    private enum class ServiceMode {
-        Listening,
-        Paused,
-        Detected,
-        Error,
-        Stopped,
-    }
+    private enum class ServiceMode { Listening, Paused, Detected, Error, Stopped }
 
     companion object {
         const val ACTION_START = "com.er1cmo.noteassistant.wakeword.START"

@@ -45,4 +45,5 @@ local.properties
 
 scripts/
 .phase4_real_tool_fix_backup/
-.phase5_01_backup_20260710-160816/
+.phase5_01_backup_*/
+.phase5_02_backup_*/

@@ -92,7 +92,7 @@ fun AssistantEntryOverlay(
     val microphoneLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission(),
     ) { granted ->
-        if (granted) viewModel.startPushToTalk(hasRecordAudioPermission = true)
+        if (granted) viewModel.startPreferredVoiceInteraction(hasRecordAudioPermission = true)
     }
 
     fun hasRecordAudioPermission(): Boolean = ContextCompat.checkSelfPermission(
@@ -121,14 +121,22 @@ fun AssistantEntryOverlay(
                 onConnectClick = viewModel::connectOrDisconnect,
                 onInputChange = viewModel::setInputText,
                 onSendClick = viewModel::sendCurrentText,
-                onStartPtt = {
+                onStartHoldToTalk = {
                     if (hasRecordAudioPermission()) {
                         viewModel.startPushToTalk(hasRecordAudioPermission = true)
                     } else {
                         microphoneLauncher.launch(Manifest.permission.RECORD_AUDIO)
                     }
                 },
-                onStopPtt = viewModel::stopPushToTalk,
+                onStopHoldToTalk = viewModel::stopPushToTalk,
+                onStartStreaming = {
+                    if (hasRecordAudioPermission()) {
+                        viewModel.startStreamingConversation(hasRecordAudioPermission = true)
+                    } else {
+                        microphoneLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                    }
+                },
+                onStopStreaming = viewModel::stopStreamingConversation,
             )
         }
         CompactAssistantAuroraButton(
@@ -380,8 +388,10 @@ private fun AssistantExpandedPanel(
     onConnectClick: () -> Unit,
     onInputChange: (String) -> Unit,
     onSendClick: () -> Unit,
-    onStartPtt: () -> Unit,
-    onStopPtt: () -> Unit,
+    onStartHoldToTalk: () -> Unit,
+    onStopHoldToTalk: () -> Unit,
+    onStartStreaming: () -> Unit,
+    onStopStreaming: () -> Unit,
 ) {
     Surface(
         modifier = Modifier.width(330.dp),
@@ -492,41 +502,14 @@ private fun AssistantExpandedPanel(
                 Button(onClick = onSendClick, modifier = Modifier.weight(1f)) {
                     Text("发送文本")
                 }
-                Surface(
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(48.dp)
-                        .pointerInput(Unit) {
-                            detectTapGestures(
-                                onPress = {
-                                    onStartPtt()
-                                    try {
-                                        tryAwaitRelease()
-                                    } finally {
-                                        onStopPtt()
-                                    }
-                                },
-                            )
-                        },
-                    shape = RoundedCornerShape(16.dp),
-                    color = if (uiState.state.audio == AssistantAudioStatus.Recording) {
-                        MaterialTheme.colorScheme.primaryContainer
-                    } else {
-                        MaterialTheme.colorScheme.tertiaryContainer
-                    },
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Text(
-                            text = if (uiState.state.audio == AssistantAudioStatus.Recording) "松手发送" else "按住说话",
-                            color = if (uiState.state.audio == AssistantAudioStatus.Recording) {
-                                MaterialTheme.colorScheme.onPrimaryContainer
-                            } else {
-                                MaterialTheme.colorScheme.onTertiaryContainer
-                            },
-                            fontWeight = FontWeight.Bold,
-                        )
-                    }
-                }
+                AssistantVoiceActionButton(
+                    state = uiState.state,
+                    modifier = Modifier.weight(1f),
+                    onStartHoldToTalk = onStartHoldToTalk,
+                    onStopHoldToTalk = onStopHoldToTalk,
+                    onStartStreaming = onStartStreaming,
+                    onStopStreaming = onStopStreaming,
+                )
             }
         }
     }
@@ -596,7 +579,11 @@ data class AssistantEntryUiState(
         AssistantActivationStatus.Activated -> "activated"
         else -> state.activation.storageValue
     }
-    val audioLabel: String = state.audio.storageValue
+    val audioLabel: String = buildString {
+        append(state.audio.storageValue)
+        append("/")
+        append(state.preferredVoiceMode.storageValue)
+    }
     val compactStatusLabel: String = when {
         !state.assistantEnabled || state.phase == AssistantPhase.Disabled -> "关闭"
         state.phase == AssistantPhase.Error || state.audio == AssistantAudioStatus.Error -> "异常"
@@ -731,6 +718,31 @@ class AssistantEntryViewModel @Inject constructor(
                 assistantController.connect()
             }
             assistantController.startPushToTalk(hasRecordAudioPermission = hasRecordAudioPermission)
+        }
+    }
+
+    fun startPreferredVoiceInteraction(hasRecordAudioPermission: Boolean) {
+        when (assistantController.state.value.preferredVoiceMode) {
+            com.er1cmo.noteassistant.assistant.runtime.state.VoiceInteractionMode.HoldToTalk ->
+                startPushToTalk(hasRecordAudioPermission)
+            com.er1cmo.noteassistant.assistant.runtime.state.VoiceInteractionMode.StreamingConversation ->
+                startStreamingConversation(hasRecordAudioPermission)
+        }
+    }
+
+    fun startStreamingConversation(hasRecordAudioPermission: Boolean) {
+        viewModelScope.launch {
+            ensureEnabled()
+            assistantController.startStreamingConversation(
+                hasRecordAudioPermission = hasRecordAudioPermission,
+                source = com.er1cmo.noteassistant.assistant.runtime.state.AssistantEntrySource.StreamingButton,
+            )
+        }
+    }
+
+    fun stopStreamingConversation() {
+        viewModelScope.launch {
+            assistantController.stopStreamingConversation("assistant_entry_button")
         }
     }
 

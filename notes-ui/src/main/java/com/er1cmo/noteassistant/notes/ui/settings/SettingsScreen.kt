@@ -45,6 +45,7 @@ import androidx.lifecycle.viewModelScope
 import com.er1cmo.noteassistant.app.settings.SettingsRepository
 import com.er1cmo.noteassistant.assistant.runtime.controller.AssistantController
 import com.er1cmo.noteassistant.assistant.runtime.state.AssistantState
+import com.er1cmo.noteassistant.assistant.runtime.state.VoiceInteractionMode
 import com.er1cmo.noteassistant.assistant.wakeword.WakeWordCoordinator
 import com.er1cmo.noteassistant.assistant.wakeword.WakeWordPreset
 import com.er1cmo.noteassistant.assistant.wakeword.WakeWordSensitivity
@@ -165,6 +166,12 @@ fun SettingsRoute(
                 onResume = viewModel::resumeWakeWord,
                 onMarkFalseTrigger = viewModel::markWakeWordFalseTrigger,
                 onResetStats = viewModel::resetWakeWordStats,
+            )
+
+            SectionTitle("Phase5-02 语音模式")
+            VoiceConversationSettingsBox(
+                state = state.assistantState,
+                onModeChange = viewModel::setVoiceInteractionMode,
             )
 
             SectionTitle("Phase3/Phase4 助手运行时")
@@ -317,6 +324,7 @@ class SettingsViewModel @Inject constructor(
 
     fun setHomeBackgroundColor(hex: String) { viewModelScope.launch { settingsRepository.setHomeBackgroundColor(hex) } }
     fun setTagDrawerBackgroundColor(hex: String) { viewModelScope.launch { settingsRepository.setTagDrawerBackgroundColor(hex) } }
+    fun setVoiceInteractionMode(mode: VoiceInteractionMode) { viewModelScope.launch { assistantController.setVoiceInteractionMode(mode) } }
     fun setWakeWordEnabled(enabled: Boolean) { viewModelScope.launch { wakeWordServiceController.setEnabled(enabled) } }
     fun setWakeWordPreset(preset: WakeWordPreset) { viewModelScope.launch { wakeWordServiceController.setPreset(preset) } }
     fun setWakeWordSensitivity(sensitivity: WakeWordSensitivity) { viewModelScope.launch { wakeWordServiceController.setSensitivity(sensitivity) } }

@@ -1,6 +1,8 @@
 package com.er1cmo.noteassistant.assistant.runtime.controller
 
+import com.er1cmo.noteassistant.assistant.runtime.state.AssistantEntrySource
 import com.er1cmo.noteassistant.assistant.runtime.state.AssistantState
+import com.er1cmo.noteassistant.assistant.runtime.state.VoiceInteractionMode
 import kotlinx.coroutines.flow.StateFlow
 
 interface AssistantController {
@@ -14,8 +16,17 @@ interface AssistantController {
     suspend fun reconnect()
     suspend fun disconnect(reason: String = "user_close")
     suspend fun sendText(text: String)
+
+    suspend fun setVoiceInteractionMode(mode: VoiceInteractionMode)
     suspend fun startPushToTalk(hasRecordAudioPermission: Boolean)
     suspend fun stopPushToTalk()
+    suspend fun startStreamingConversation(
+        hasRecordAudioPermission: Boolean,
+        source: AssistantEntrySource = AssistantEntrySource.StreamingButton,
+        wakeKeyword: String? = null,
+    )
+    suspend fun stopStreamingConversation(reason: String = "user_stop")
+
     suspend fun simulateIncomingToolCall(toolName: String, argumentsJson: String = "{}")
     suspend fun simulateIncomingToolsList()
 

@@ -7,6 +7,9 @@ import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
 import androidx.core.content.ContextCompat
+import com.er1cmo.noteassistant.core.common.audio.MicrophoneLease
+import com.er1cmo.noteassistant.core.common.audio.MicrophoneOwner
+import com.er1cmo.noteassistant.core.common.audio.MicrophoneOwnershipCoordinator
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -20,6 +23,7 @@ import kotlinx.coroutines.withContext
 class SherpaWakeWordEngine(
     private val context: Context,
     private val config: WakeWordConfig,
+    private val microphoneOwnershipCoordinator: MicrophoneOwnershipCoordinator,
     private val onEvent: (WakeWordEvent) -> Unit,
 ) {
     private val engineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -51,10 +55,25 @@ class SherpaWakeWordEngine(
             return
         }
 
+        var lease: MicrophoneLease? = null
         var detector: SherpaWakeWordDetector? = null
         var audioRecord: AudioRecord? = null
         var pendingDetection: WakeWordEvent.Detected? = null
         try {
+            lease = microphoneOwnershipCoordinator.acquire(
+                owner = MicrophoneOwner.WakeWordKws,
+                reason = "wakeword:${config.phrase.displayText}",
+                timeoutMs = MICROPHONE_ACQUIRE_TIMEOUT_MS,
+            )
+            if (lease == null) {
+                running.set(false)
+                emit(WakeWordEvent.Error(
+                    "本地唤醒词暂未取得麦克风：当前由助手录音占用",
+                    "microphone_busy",
+                ))
+                return
+            }
+
             emit(WakeWordEvent.Status(
                 message = "本地唤醒词模型初始化中：${config.phrase.displayText}",
                 state = "initializing",
@@ -105,6 +124,9 @@ class SherpaWakeWordEngine(
             runCatching { audioRecord?.stop() }
             runCatching { audioRecord?.release() }
             runCatching { detector?.release() }
+            lease?.let {
+                microphoneOwnershipCoordinator.release(it, "wakeword_audio_released")
+            }
             emit(WakeWordEvent.Status(
                 message = "本地唤醒词 AudioRecord 已释放",
                 state = "audio_released",
@@ -182,5 +204,9 @@ class SherpaWakeWordEngine(
 
     private fun emitAsync(event: WakeWordEvent) {
         engineScope.launch(Dispatchers.Main.immediate) { onEvent(event) }
+    }
+
+    private companion object {
+        const val MICROPHONE_ACQUIRE_TIMEOUT_MS = 2_500L
     }
 }

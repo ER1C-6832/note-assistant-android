@@ -1,6 +1,14 @@
 package com.er1cmo.noteassistant.assistant.runtime.controller
 
 import com.er1cmo.noteassistant.app.settings.SettingsRepository
+import com.er1cmo.noteassistant.app.settings.VoiceConversationSettingsRepository
+import com.er1cmo.noteassistant.assistant.runtime.audio.VoiceAutomaticStopReason
+import com.er1cmo.noteassistant.assistant.runtime.audio.VoiceCaptureConfig
+import com.er1cmo.noteassistant.assistant.runtime.audio.VoiceActivitySnapshot
+import com.er1cmo.noteassistant.core.common.audio.MicrophoneLease
+import com.er1cmo.noteassistant.core.common.audio.MicrophoneOwner
+import com.er1cmo.noteassistant.core.common.audio.MicrophoneOwnershipCoordinator
+import com.er1cmo.noteassistant.core.common.audio.WakeWordAudioGate
 import com.er1cmo.noteassistant.assistant.runtime.activation.OtaActivationClient
 import com.er1cmo.noteassistant.assistant.runtime.activation.OtaActivationState
 import com.er1cmo.noteassistant.assistant.runtime.audio.RealAudioEngine
@@ -13,15 +21,20 @@ import com.er1cmo.noteassistant.assistant.runtime.network.XiaozhiWebSocketEvent
 import com.er1cmo.noteassistant.assistant.runtime.protocol.ProtocolEvent
 import com.er1cmo.noteassistant.assistant.runtime.recovery.ReconnectPolicy
 import com.er1cmo.noteassistant.assistant.runtime.state.AssistantActivationStatus
+import com.er1cmo.noteassistant.assistant.runtime.state.AssistantEntrySource
 import com.er1cmo.noteassistant.assistant.runtime.state.AssistantAudioStatus
 import com.er1cmo.noteassistant.assistant.runtime.state.AssistantConnectionStatus
 import com.er1cmo.noteassistant.assistant.runtime.state.AssistantPhase
 import com.er1cmo.noteassistant.assistant.runtime.state.AssistantRuntimeMode
 import com.er1cmo.noteassistant.assistant.runtime.state.AssistantState
+import com.er1cmo.noteassistant.assistant.runtime.state.StreamingConversationState
+import com.er1cmo.noteassistant.assistant.runtime.state.VoiceActivityState
+import com.er1cmo.noteassistant.assistant.runtime.state.VoiceInteractionMode
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -30,6 +43,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import org.json.JSONObject
+import java.util.UUID
 
 @Singleton
 class LocalAssistantController @Inject constructor(
@@ -40,6 +54,9 @@ class LocalAssistantController @Inject constructor(
     private val fakeWebSocketClient: FakeXiaozhiWebSocketClient,
     private val realWebSocketClient: XiaozhiWebSocketClient,
     private val realAudioEngine: RealAudioEngine,
+    private val voiceConversationSettingsRepository: VoiceConversationSettingsRepository,
+    private val microphoneOwnershipCoordinator: MicrophoneOwnershipCoordinator,
+    private val wakeWordAudioGate: WakeWordAudioGate,
     private val reconnectPolicy: ReconnectPolicy,
 ) : AssistantController {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -47,6 +64,15 @@ class LocalAssistantController @Inject constructor(
 
     @Volatile
     private var realUploadedAudioFrames: Int = 0
+
+    private var assistantMicrophoneLease: MicrophoneLease? = null
+    private var pttGeneration: Long = 0L
+    private var streamingGeneration: Long = 0L
+    private var streamingTurnToken: Long = 0L
+    private var streamingFinalizedTurnToken: Long = -1L
+    private var streamingNextTurnJob: Job? = null
+    private var streamingResponseWatchdogJob: Job? = null
+    private var pttWakeWordResumeJob: Job? = null
 
     override val state: StateFlow<AssistantState> = mutableState.asStateFlow()
 
@@ -61,6 +87,19 @@ class LocalAssistantController @Inject constructor(
                 }
             }
         }
+        scope.launch {
+            voiceConversationSettingsRepository.settings.collect { settings ->
+                mutableState.value = mutableState.value.copy(
+                    preferredVoiceMode = VoiceInteractionMode.fromStorage(settings.defaultMode),
+                    streamingIdleTimeoutMs = settings.streamingIdleTimeoutMs,
+                )
+            }
+        }
+        scope.launch {
+            microphoneOwnershipCoordinator.state.collect { ownership ->
+                mutableState.value = mutableState.value.copy(microphoneOwner = ownership.owner)
+            }
+        }
     }
 
     override suspend fun enableAssistant() {
@@ -69,6 +108,8 @@ class LocalAssistantController @Inject constructor(
     }
 
     override suspend fun disableAssistant() {
+        stopStreamingConversationInternal("assistant_disabled", resumeWakeWord = false)
+        releaseAssistantMicrophone("assistant_disabled", resumeWakeWord = false)
         settingsRepository.setAssistantEnabled(false)
         realAudioEngine.cancel()
         fakeWebSocketClient.close("assistant_disabled")
@@ -206,6 +247,8 @@ class LocalAssistantController @Inject constructor(
     }
 
     override suspend fun reconnect() {
+        stopStreamingConversationInternal("manual_reconnect", resumeWakeWord = false)
+        releaseAssistantMicrophone("manual_reconnect", resumeWakeWord = false)
         realAudioEngine.cancel()
         if (mutableState.value.runtimeMode == AssistantRuntimeMode.Real) {
             realWebSocketClient.close("manual_reconnect")
@@ -223,6 +266,8 @@ class LocalAssistantController @Inject constructor(
     }
 
     override suspend fun disconnect(reason: String) {
+        stopStreamingConversationInternal(reason, resumeWakeWord = true)
+        releaseAssistantMicrophone(reason, resumeWakeWord = false)
         realAudioEngine.cancel()
         val currentMode = mutableState.value.runtimeMode
         val closed = fakeWebSocketClient.close(reason)
@@ -309,6 +354,8 @@ class LocalAssistantController @Inject constructor(
     }
 
     override suspend fun startPushToTalk(hasRecordAudioPermission: Boolean) {
+        pttGeneration += 1L
+        val generation = pttGeneration
         if (!hasRecordAudioPermission) {
             realAudioEngine.cancel()
             mutableState.value = stateMachine.error(
@@ -321,10 +368,33 @@ class LocalAssistantController @Inject constructor(
             )
             return
         }
+        if (mutableState.value.streamingSessionActive) {
+            stopStreamingConversationInternal("switch_to_push_to_talk", resumeWakeWord = false)
+        }
+        if (!prepareAssistantCapture(AssistantEntrySource.PushToTalk, "push_to_talk")) return
+        if (pttGeneration != generation) {
+            releaseAssistantMicrophone("push_to_talk_released_before_start", resumeWakeWord = true)
+            return
+        }
         if (mutableState.value.runtimeMode == AssistantRuntimeMode.Real) {
             startRealPushToTalk()
         } else {
             startFakePushToTalk()
+        }
+        if (pttGeneration != generation && realAudioEngine.isRecording()) {
+            if (mutableState.value.runtimeMode == AssistantRuntimeMode.Real) {
+                stopRealPushToTalk()
+            } else {
+                stopFakePushToTalk()
+            }
+        }
+        if (!realAudioEngine.isRecording()) {
+            releaseAssistantMicrophone("push_to_talk_start_failed_or_released", resumeWakeWord = true)
+        } else {
+            mutableState.value = mutableState.value.copy(
+                activeEntrySource = AssistantEntrySource.PushToTalk,
+                microphoneOwner = MicrophoneOwner.AssistantCapture,
+            )
         }
     }
 
@@ -400,10 +470,18 @@ class LocalAssistantController @Inject constructor(
     }
 
     override suspend fun stopPushToTalk() {
-        if (mutableState.value.runtimeMode == AssistantRuntimeMode.Real) {
-            stopRealPushToTalk()
-        } else {
-            stopFakePushToTalk()
+        pttGeneration += 1L
+        try {
+            if (realAudioEngine.isRecording()) {
+                if (mutableState.value.runtimeMode == AssistantRuntimeMode.Real) {
+                    stopRealPushToTalk()
+                } else {
+                    stopFakePushToTalk()
+                }
+            }
+        } finally {
+            releaseAssistantMicrophone("push_to_talk_released", resumeWakeWord = false)
+            schedulePushToTalkWakeWordResume(RESPONSE_FALLBACK_RESUME_MS)
         }
     }
 
@@ -486,6 +564,368 @@ class LocalAssistantController @Inject constructor(
             )
         }
     }
+
+    override suspend fun setVoiceInteractionMode(mode: VoiceInteractionMode) {
+        if (mutableState.value.streamingSessionActive) {
+            stopStreamingConversationInternal("voice_mode_changed", resumeWakeWord = true)
+        }
+        voiceConversationSettingsRepository.setDefaultMode(mode.storageValue)
+        mutableState.value = mutableState.value.copy(
+            preferredVoiceMode = mode,
+            statusText = "默认语音模式已切换为：${mode.label}",
+            lastEventAt = nowMillis(),
+        )
+    }
+
+    override suspend fun startStreamingConversation(
+        hasRecordAudioPermission: Boolean,
+        source: AssistantEntrySource,
+        wakeKeyword: String?,
+    ) {
+        if (!hasRecordAudioPermission) {
+            mutableState.value = stateMachine.error(
+                mutableState.value.copy(audio = AssistantAudioStatus.Error),
+                "缺少 RECORD_AUDIO 权限，无法开始流式对话",
+                nowMillis(),
+            )
+            return
+        }
+        if (mutableState.value.streamingSessionActive) return
+        if (!mutableState.value.assistantEnabled) enableAssistant()
+        if (mutableState.value.runtimeMode != AssistantRuntimeMode.Real) useRealRuntime()
+
+        pttWakeWordResumeJob?.cancel()
+        streamingGeneration += 1L
+        val generation = streamingGeneration
+        mutableState.value = mutableState.value.copy(
+            preferredVoiceMode = VoiceInteractionMode.StreamingConversation,
+            activeEntrySource = source,
+            streamingConversationState = StreamingConversationState.Starting,
+            streamingSessionActive = true,
+            streamingSessionId = UUID.randomUUID().toString(),
+            streamingTurnIndex = 0,
+            vadState = VoiceActivityState.Warmup,
+            vadStatusText = "流式对话正在准备第一轮",
+            statusText = if (wakeKeyword.isNullOrBlank()) {
+                "流式对话启动中"
+            } else {
+                "唤醒词 $wakeKeyword 已进入流式对话准备"
+            },
+            errorMessage = null,
+            lastEventAt = nowMillis(),
+        )
+        startStreamingTurn(generation)
+    }
+
+    override suspend fun stopStreamingConversation(reason: String) {
+        stopStreamingConversationInternal(reason, resumeWakeWord = true)
+    }
+
+    private suspend fun startStreamingTurn(generation: Long) {
+        if (!isStreamingGenerationActive(generation)) return
+        if (!mutableState.value.isConnected || !realWebSocketClient.isConnected()) connectReal()
+        if (!isStreamingGenerationActive(generation)) return
+        if (!mutableState.value.isConnected || !realWebSocketClient.isConnected()) {
+            mutableState.value = mutableState.value.copy(
+                streamingConversationState = StreamingConversationState.Error,
+                statusText = "流式对话无法建立真实 WebSocket",
+                errorMessage = "streaming_connect_failed",
+            )
+            stopStreamingConversationInternal("streaming_connect_failed", resumeWakeWord = true)
+            return
+        }
+
+        if (!prepareAssistantCapture(mutableState.value.activeEntrySource ?: AssistantEntrySource.StreamingButton, "streaming_turn")) {
+            mutableState.value = mutableState.value.copy(
+                streamingConversationState = StreamingConversationState.Error,
+                statusText = "流式对话未取得麦克风",
+            )
+            stopStreamingConversationInternal("streaming_microphone_failed", resumeWakeWord = true)
+            return
+        }
+
+        val listenStarted = realWebSocketClient.sendStartListening(mode = "manual", onEvent = ::handleRealWebSocketEvent)
+        if (!listenStarted) {
+            releaseAssistantMicrophone("streaming_listen_start_failed", resumeWakeWord = false)
+            mutableState.value = mutableState.value.copy(
+                streamingConversationState = StreamingConversationState.Error,
+                statusText = "流式对话 listen/start 发送失败",
+            )
+            stopStreamingConversationInternal("streaming_listen_start_failed", resumeWakeWord = true)
+            return
+        }
+
+        realUploadedAudioFrames = 0
+        streamingTurnToken += 1L
+        val turnToken = streamingTurnToken
+        val audioStart = realAudioEngine.startRecording(
+            nowMillis = nowMillis(),
+            onEncodedFrame = { packet ->
+                val ok = realWebSocketClient.sendAudioFrame(packet)
+                if (ok) realUploadedAudioFrames += 1
+                ok
+            },
+            captureConfig = VoiceCaptureConfig.streaming(mutableState.value.streamingIdleTimeoutMs),
+            onVoiceActivity = { snapshot -> onStreamingVoiceActivity(snapshot, generation, turnToken) },
+            onAutomaticStop = { reason ->
+                scope.launch { handleStreamingAutomaticStop(reason, generation, turnToken) }
+            },
+        )
+        if (!audioStart.started) {
+            releaseAssistantMicrophone("streaming_audio_start_failed", resumeWakeWord = false)
+            mutableState.value = stateMachine.error(
+                mutableState.value.copy(
+                    streamingConversationState = StreamingConversationState.Error,
+                    audio = AssistantAudioStatus.Error,
+                ),
+                audioStart.summary,
+                nowMillis(),
+            )
+            stopStreamingConversationInternal("streaming_audio_start_failed", resumeWakeWord = true)
+            return
+        }
+
+        val nextTurn = mutableState.value.streamingTurnIndex + 1
+        mutableState.value = stateMachine.startListening(mutableState.value, nowMillis()).copy(
+            runtimeMode = AssistantRuntimeMode.Real,
+            fakeRuntime = false,
+            activeEntrySource = mutableState.value.activeEntrySource ?: AssistantEntrySource.StreamingButton,
+            microphoneOwner = MicrophoneOwner.AssistantCapture,
+            streamingConversationState = StreamingConversationState.ListeningForSpeech,
+            streamingSessionActive = true,
+            streamingTurnIndex = nextTurn,
+            vadState = VoiceActivityState.Warmup,
+            vadStatusText = "第 $nextTurn 轮：VAD 预热中",
+            statusText = "流式对话第 $nextTurn 轮正在聆听",
+            errorMessage = null,
+            audioCapturedFrames = 0,
+            audioEncodedFrames = 0,
+            audioUploadedFrames = 0,
+            lastAudioSummary = audioStart.summary,
+            lastEventAt = nowMillis(),
+        )
+    }
+
+    private fun onStreamingVoiceActivity(
+        snapshot: VoiceActivitySnapshot,
+        generation: Long,
+        turnToken: Long,
+    ) {
+        if (!isStreamingGenerationActive(generation) || streamingTurnToken != turnToken) return
+        val streamingState = when (snapshot.state) {
+            VoiceActivityState.SpeechDetected,
+            VoiceActivityState.SpeechActive -> StreamingConversationState.UserSpeaking
+            VoiceActivityState.EndOfSpeech -> StreamingConversationState.SubmittingTurn
+            VoiceActivityState.NoSpeechTimeout -> StreamingConversationState.Stopping
+            else -> StreamingConversationState.ListeningForSpeech
+        }
+        mutableState.value = mutableState.value.copy(
+            streamingConversationState = streamingState,
+            vadState = snapshot.state,
+            vadStatusText = "${snapshot.state.storageValue} · peak=${snapshot.peakAbs} rms=${snapshot.rms} · ${snapshot.elapsedMs}ms",
+            statusText = when (snapshot.state) {
+                VoiceActivityState.SpeechDetected -> "流式对话检测到用户起声"
+                VoiceActivityState.SpeechActive -> "流式对话正在接收用户语音"
+                VoiceActivityState.EndOfSpeech -> "流式对话检测到停顿，准备提交本轮"
+                VoiceActivityState.NoSpeechTimeout -> "流式对话等待语音超时"
+                else -> mutableState.value.statusText
+            },
+            lastEventAt = nowMillis(),
+        )
+    }
+
+    private suspend fun handleStreamingAutomaticStop(
+        reason: VoiceAutomaticStopReason,
+        generation: Long,
+        turnToken: Long,
+    ) {
+        if (!isStreamingGenerationActive(generation) || streamingTurnToken != turnToken) return
+        if (streamingFinalizedTurnToken == turnToken) return
+        streamingFinalizedTurnToken = turnToken
+        val stoppedAudio = realAudioEngine.stopRecordingAndAwait(maxStopLatencyMs = 1_500L)
+        val listenStopped = realWebSocketClient.sendStopListening(::handleRealWebSocketEvent)
+        releaseAssistantMicrophone("streaming_turn_audio_released", resumeWakeWord = false)
+
+        if (reason == VoiceAutomaticStopReason.NoSpeechTimeout) {
+            mutableState.value = mutableState.value.copy(
+                audio = AssistantAudioStatus.Idle,
+                streamingConversationState = StreamingConversationState.Stopping,
+                vadState = VoiceActivityState.NoSpeechTimeout,
+                vadStatusText = "等待用户语音超过 ${mutableState.value.streamingIdleTimeoutMs}ms",
+                statusText = "流式对话空闲超时，正在结束",
+                lastAudioSummary = stoppedAudio.summary,
+            )
+            stopStreamingConversationInternal("streaming_idle_timeout", resumeWakeWord = true)
+            return
+        }
+
+        val hasUsefulAudio = stoppedAudio.opusFrames >= MIN_STREAMING_OPUS_PACKETS
+        mutableState.value = stateMachine.stopListening(mutableState.value, nowMillis()).copy(
+            runtimeMode = AssistantRuntimeMode.Real,
+            fakeRuntime = false,
+            phase = if (hasUsefulAudio) AssistantPhase.Thinking else AssistantPhase.Connected,
+            audio = AssistantAudioStatus.Idle,
+            microphoneOwner = MicrophoneOwner.None,
+            streamingConversationState = if (hasUsefulAudio) {
+                StreamingConversationState.Thinking
+            } else {
+                StreamingConversationState.WaitingForNextTurn
+            },
+            vadState = VoiceActivityState.EndOfSpeech,
+            vadStatusText = "VAD 已提交第 ${mutableState.value.streamingTurnIndex} 轮",
+            statusText = if (hasUsefulAudio) {
+                "流式对话已自动发送 listen/stop=$listenStopped，等待回复"
+            } else {
+                "本轮有效语音不足，准备重新聆听"
+            },
+            audioCapturedFrames = stoppedAudio.pcmFrames,
+            audioEncodedFrames = stoppedAudio.opusFrames,
+            audioUploadedFrames = realUploadedAudioFrames,
+            lastAudioSummary = stoppedAudio.summary,
+            gateBRealAudioUploadVerified = mutableState.value.gateBRealAudioUploadVerified || realUploadedAudioFrames > 0,
+            lastEventAt = nowMillis(),
+        )
+        if (hasUsefulAudio) {
+            scheduleStreamingResponseWatchdog(generation)
+        } else {
+            scheduleNextStreamingTurn(generation, STREAMING_EMPTY_TURN_RETRY_MS)
+        }
+    }
+
+    private fun scheduleNextStreamingTurn(generation: Long, delayMs: Long) {
+        streamingResponseWatchdogJob?.cancel()
+        streamingNextTurnJob?.cancel()
+        if (!isStreamingGenerationActive(generation)) return
+        mutableState.value = mutableState.value.copy(
+            streamingConversationState = StreamingConversationState.WaitingForNextTurn,
+            vadStatusText = "等待下一轮聆听",
+        )
+        streamingNextTurnJob = scope.launch {
+            delay(delayMs)
+            if (isStreamingGenerationActive(generation) && !realAudioEngine.isRecording()) {
+                startStreamingTurn(generation)
+            }
+        }
+    }
+
+    private fun scheduleStreamingResponseWatchdog(generation: Long) {
+        streamingResponseWatchdogJob?.cancel()
+        streamingResponseWatchdogJob = scope.launch {
+            delay(STREAMING_RESPONSE_TIMEOUT_MS)
+            if (!isStreamingGenerationActive(generation)) return@launch
+            mutableState.value = mutableState.value.copy(
+                statusText = "流式对话等待回复超时，恢复下一轮聆听",
+                streamingConversationState = StreamingConversationState.Recovering,
+            )
+            scheduleNextStreamingTurn(generation, STREAMING_RECOVERY_DELAY_MS)
+        }
+    }
+
+    private suspend fun stopStreamingConversationInternal(
+        reason: String,
+        resumeWakeWord: Boolean,
+    ) {
+        val wasActive = mutableState.value.streamingSessionActive
+        streamingFinalizedTurnToken = streamingTurnToken
+        streamingGeneration += 1L
+        streamingNextTurnJob?.cancel()
+        streamingNextTurnJob = null
+        streamingResponseWatchdogJob?.cancel()
+        streamingResponseWatchdogJob = null
+        if (wasActive) {
+            mutableState.value = mutableState.value.copy(
+                streamingConversationState = StreamingConversationState.Stopping,
+                statusText = "正在结束流式对话：$reason",
+            )
+        }
+        if (realAudioEngine.isRecording()) {
+            realAudioEngine.stopRecordingAndAwait(maxStopLatencyMs = 1_500L)
+        }
+        if (wasActive && realWebSocketClient.isConnected()) {
+            realWebSocketClient.sendStopListening(::handleRealWebSocketEvent)
+        }
+        releaseAssistantMicrophone("streaming_stopped:$reason", resumeWakeWord = false)
+        mutableState.value = mutableState.value.copy(
+            phase = if (mutableState.value.isConnected) AssistantPhase.Connected else AssistantPhase.Idle,
+            audio = AssistantAudioStatus.Idle,
+            activeEntrySource = null,
+            microphoneOwner = MicrophoneOwner.None,
+            streamingConversationState = StreamingConversationState.Inactive,
+            streamingSessionActive = false,
+            streamingSessionId = null,
+            vadState = VoiceActivityState.Disabled,
+            vadStatusText = "流式对话已结束：$reason",
+            statusText = if (wasActive) "流式对话已结束：$reason" else mutableState.value.statusText,
+            lastEventAt = nowMillis(),
+        )
+        if (resumeWakeWord) {
+            wakeWordAudioGate.resumeAfterAssistant("流式对话已结束：$reason")
+        }
+    }
+
+    private suspend fun prepareAssistantCapture(
+        source: AssistantEntrySource,
+        reason: String,
+    ): Boolean {
+        pttWakeWordResumeJob?.cancel()
+        val paused = wakeWordAudioGate.pauseForAssistant("助手准备使用麦克风：$reason")
+        if (!paused) {
+            mutableState.value = stateMachine.error(
+                mutableState.value.copy(audio = AssistantAudioStatus.Error),
+                "唤醒词 AudioRecord 未及时释放，未启动助手录音",
+                nowMillis(),
+            )
+            return false
+        }
+        assistantMicrophoneLease?.let { existing ->
+            microphoneOwnershipCoordinator.release(existing, "replace_assistant_capture")
+            assistantMicrophoneLease = null
+        }
+        val lease = microphoneOwnershipCoordinator.acquire(
+            MicrophoneOwner.AssistantCapture,
+            "assistant:${source.storageValue}:$reason",
+            timeoutMs = MICROPHONE_ACQUIRE_TIMEOUT_MS,
+        )
+        if (lease == null) {
+            wakeWordAudioGate.resumeAfterAssistant("助手未取得麦克风")
+            mutableState.value = stateMachine.error(
+                mutableState.value.copy(audio = AssistantAudioStatus.Error),
+                "麦克风正被其他组件占用",
+                nowMillis(),
+            )
+            return false
+        }
+        assistantMicrophoneLease = lease
+        mutableState.value = mutableState.value.copy(
+            activeEntrySource = source,
+            microphoneOwner = MicrophoneOwner.AssistantCapture,
+            errorMessage = null,
+        )
+        return true
+    }
+
+    private suspend fun releaseAssistantMicrophone(reason: String, resumeWakeWord: Boolean) {
+        assistantMicrophoneLease?.let { lease ->
+            microphoneOwnershipCoordinator.release(lease, reason)
+        }
+        assistantMicrophoneLease = null
+        mutableState.value = mutableState.value.copy(microphoneOwner = MicrophoneOwner.None)
+        if (resumeWakeWord) wakeWordAudioGate.resumeAfterAssistant(reason)
+    }
+
+    private fun schedulePushToTalkWakeWordResume(delayMs: Long) {
+        pttWakeWordResumeJob?.cancel()
+        pttWakeWordResumeJob = scope.launch {
+            delay(delayMs)
+            if (!mutableState.value.streamingSessionActive && !realAudioEngine.isRecording()) {
+                mutableState.value = mutableState.value.copy(activeEntrySource = null)
+                wakeWordAudioGate.resumeAfterAssistant("按住说话回复已完成或超时")
+            }
+        }
+    }
+
+    private fun isStreamingGenerationActive(generation: Long): Boolean =
+        mutableState.value.streamingSessionActive && streamingGeneration == generation
 
     override suspend fun simulateIncomingToolCall(toolName: String, argumentsJson: String) {
         if (!fakeWebSocketClient.isConnected()) connectFake()
@@ -734,21 +1174,58 @@ class LocalAssistantController @Inject constructor(
                 )
             }
             is ProtocolEvent.AssistantText -> {
+                val streamingActive = base.streamingSessionActive
                 mutableState.value = stateMachine.assistantText(base, event.text, nowMillis()).copy(
                     runtimeMode = AssistantRuntimeMode.Real,
                     fakeRuntime = false,
                     gateBRealTextVerified = true,
+                    streamingConversationState = if (streamingActive) {
+                        StreamingConversationState.Thinking
+                    } else {
+                        base.streamingConversationState
+                    },
                     statusText = "收到真实助手文本回复",
                 )
+                if (streamingActive) {
+                    scheduleNextStreamingTurn(streamingGeneration, STREAMING_TEXT_ONLY_RESUME_MS)
+                } else {
+                    schedulePushToTalkWakeWordResume(RESPONSE_TEXT_RESUME_MS)
+                }
             }
             is ProtocolEvent.TtsState -> {
-                val next = if (event.state == "stop" || event.state == "end") {
+                val ended = event.state == "stop" || event.state == "end"
+                val streamingActive = base.streamingSessionActive
+                if (ended) {
                     realAudioEngine.stopPlaybackAndRelease()
-                    base.copy(phase = AssistantPhase.Connected, audio = AssistantAudioStatus.Idle)
+                    mutableState.value = base.copy(
+                        phase = AssistantPhase.Connected,
+                        audio = AssistantAudioStatus.Idle,
+                        streamingConversationState = if (streamingActive) {
+                            StreamingConversationState.WaitingForNextTurn
+                        } else {
+                            base.streamingConversationState
+                        },
+                        statusText = "真实 TTS state=${event.state}",
+                    )
+                    if (streamingActive) {
+                        scheduleNextStreamingTurn(streamingGeneration, STREAMING_TTS_RESUME_MS)
+                    } else {
+                        schedulePushToTalkWakeWordResume(RESPONSE_TTS_RESUME_MS)
+                    }
                 } else {
-                    base.copy(phase = AssistantPhase.Speaking, audio = AssistantAudioStatus.Playing)
+                    streamingNextTurnJob?.cancel()
+                    pttWakeWordResumeJob?.cancel()
+                    mutableState.value = base.copy(
+                        phase = AssistantPhase.Speaking,
+                        audio = AssistantAudioStatus.Playing,
+                        streamingConversationState = if (streamingActive) {
+                            StreamingConversationState.Speaking
+                        } else {
+                            base.streamingConversationState
+                        },
+                        statusText = "真实 TTS state=${event.state}",
+                    )
                 }
-                mutableState.value = next.copy(statusText = "真实 TTS state=${event.state}")
             }
             is ProtocolEvent.ListenState -> {
                 mutableState.value = base.copy(statusText = "真实 listen state=${event.state}")
@@ -789,11 +1266,18 @@ class LocalAssistantController @Inject constructor(
     }
 
     private fun handleRealIncomingAudio(bytes: ByteArray) {
+        streamingNextTurnJob?.cancel()
+        pttWakeWordResumeJob?.cancel()
         scope.launch {
             val before = stateMachine.speaking(mutableState.value, nowMillis()).copy(
                 runtimeMode = AssistantRuntimeMode.Real,
                 fakeRuntime = false,
                 lastProtocolEvent = "IncomingBinary",
+                streamingConversationState = if (mutableState.value.streamingSessionActive) {
+                    StreamingConversationState.Speaking
+                } else {
+                    mutableState.value.streamingConversationState
+                },
                 statusText = "收到真实服务端二进制音频，正在解码播放",
             )
             mutableState.value = before
@@ -870,4 +1354,17 @@ class LocalAssistantController @Inject constructor(
     )
 
     private fun nowMillis(): Long = System.currentTimeMillis()
+
+    private companion object {
+        const val MICROPHONE_ACQUIRE_TIMEOUT_MS = 3_000L
+        const val MIN_STREAMING_OPUS_PACKETS = 6
+        const val STREAMING_RESPONSE_TIMEOUT_MS = 20_000L
+        const val STREAMING_TEXT_ONLY_RESUME_MS = 2_500L
+        const val STREAMING_TTS_RESUME_MS = 350L
+        const val STREAMING_EMPTY_TURN_RETRY_MS = 500L
+        const val STREAMING_RECOVERY_DELAY_MS = 500L
+        const val RESPONSE_TEXT_RESUME_MS = 3_000L
+        const val RESPONSE_TTS_RESUME_MS = 500L
+        const val RESPONSE_FALLBACK_RESUME_MS = 12_000L
+    }
 }
