@@ -17,7 +17,7 @@ class NotesGetTool @Inject constructor(
 ) : McpTool {
     override val name: String = "notes.get"
     override val description: String =
-        "读取一条便签。note_id 是内部 ID；语音入口可使用 note_ref/note_title/title/query 通过用户可见标题读取。"
+        "读取一条便签并返回标题、正文、类型、完成状态和标签。读取不会自动打开 UI；需要打开时另用 ui.open_note。"
     override val riskLevel: McpRiskLevel = McpRiskLevel.Low
     override val descriptor: McpToolDescriptor = McpToolDescriptor(
         name = name,
@@ -42,8 +42,8 @@ class NotesGetTool @Inject constructor(
         mutates = false,
         confirmation = McpToolDescriptor.CONFIRMATION_NOT_REQUIRED,
         examples = listOf(
+            "读取验收手柄记录：{\"note_ref\":\"验收手柄记录\",\"scope\":\"all\"}",
             "读取工具结果里的内部 ID：{\"note_id\":123}",
-            "读取标题为 1 的便签：{\"note_ref\":\"1\",\"scope\":\"all\"}",
         ),
     )
 
@@ -61,7 +61,7 @@ class NotesGetTool @Inject constructor(
         val noteId = parser.optionalLong("note_id")?.takeIf { it > 0L }
         val ref = raw.userVisibleReference()
         val note = when {
-            ref.isNotBlank() -> resolveByVisibleReference(parser, ref, argumentsJson) ?: return ambiguousOrNotFound(ref, parser, argumentsJson)
+            ref.isNotBlank() -> resolveByVisibleReference(parser, ref) ?: return ambiguousOrNotFound(ref, parser, argumentsJson)
             noteId != null -> noteUseCases.getNote(noteId) ?: return McpToolResult.failed(
                 message = "没有找到便签：$noteId。note_id 是内部 ID；如果用户说的是标题，请改用 note_ref/title/query。",
                 toolName = name,
@@ -90,9 +90,11 @@ class NotesGetTool @Inject constructor(
         val resultJson = note.toAssistantNoteResultJson()
             .putAssistantNoteReferenceRule()
             .put("resolved_by", if (ref.isNotBlank()) "user_visible_reference" else "internal_note_id")
+            .put("ui_effect", "none")
+            .put("assistant_next_step_hint", "Read the title and content from this result. Do not call another search/list tool. Use ui.open_note only if the user explicitly asks to open it.")
             .toString()
         return McpToolResult.success(
-            message = "已读取便签：${note.title.ifBlank { "未命名便签" }}",
+            message = note.toAssistantReadableMessage(),
             resultJson = resultJson,
             toolName = name,
             risk = McpRiskLevel.Low,
@@ -103,7 +105,6 @@ class NotesGetTool @Inject constructor(
     private suspend fun resolveByVisibleReference(
         parser: ToolArgumentParser,
         ref: String,
-        argumentsJson: String,
     ): Note? {
         val candidates = loadReferencePool(parser)
         val normalized = ref.visibleNormalize()
@@ -159,18 +160,15 @@ class NotesGetTool @Inject constructor(
     }
 }
 
-private fun JSONObject.userVisibleReference(): String {
-    return listOf(
-        optString("note_ref", ""),
-        optString("note_title", ""),
-        optString("title", ""),
-        optString("query", ""),
-    ).firstOrNull { it.isNotBlank() }?.cleanUserReference().orEmpty()
-}
+private fun JSONObject.userVisibleReference(): String = listOf(
+    optString("note_ref", ""),
+    optString("note_title", ""),
+    optString("title", ""),
+    optString("query", ""),
+).firstOrNull { it.isNotBlank() }?.cleanUserReference().orEmpty()
 
-private fun JSONObject.optionalBooleanByScope(explicitName: String, defaultValue: Boolean): Boolean {
-    return if (has(explicitName) && !isNull(explicitName)) optBoolean(explicitName, defaultValue) else defaultValue
-}
+private fun JSONObject.optionalBooleanByScope(explicitName: String, defaultValue: Boolean): Boolean =
+    if (has(explicitName) && !isNull(explicitName)) optBoolean(explicitName, defaultValue) else defaultValue
 
 private fun String.visibleNormalize(): String = cleanUserReference().lowercase().replace(Regex("\\s+"), "")
 

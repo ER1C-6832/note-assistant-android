@@ -26,6 +26,14 @@ sealed interface NoteListExternalCommand {
         override val sequence: Long,
     ) : NoteListExternalCommand
 
+    data class ShowTodos(
+        override val sequence: Long,
+    ) : NoteListExternalCommand
+
+    data class ShowDone(
+        override val sequence: Long,
+    ) : NoteListExternalCommand
+
     data class ShowNoteList(
         override val sequence: Long,
     ) : NoteListExternalCommand

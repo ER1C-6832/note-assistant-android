@@ -58,6 +58,15 @@ fun AppNavigation(
         navController.navigateToNotesRoot()
     }
 
+    // External list commands are one-shot navigation effects. Keeping the old
+    // command while opening a detail/editor route caused the same search/filter
+    // to be replayed when returning to the home list.
+    LaunchedEffect(currentRoute) {
+        if (currentRoute != null && currentRoute != AppRoute.Notes.route) {
+            noteListCommand = null
+        }
+    }
+
     LaunchedEffect(navController) {
         uiCommandViewModel.commands.collect { command ->
             when (command) {
@@ -86,6 +95,8 @@ fun AppNavigation(
                 UiCommand.ShowArchive -> showNotes(NoteListExternalCommand.ShowArchive(nextNoteListSequence()))
                 UiCommand.ShowTrash -> showNotes(NoteListExternalCommand.ShowTrash(nextNoteListSequence()))
                 UiCommand.ShowPinned -> showNotes(NoteListExternalCommand.ShowPinned(nextNoteListSequence()))
+                UiCommand.ShowTodos -> showNotes(NoteListExternalCommand.ShowTodos(nextNoteListSequence()))
+                UiCommand.ShowDone -> showNotes(NoteListExternalCommand.ShowDone(nextNoteListSequence()))
             }
         }
     }
@@ -125,6 +136,9 @@ fun AppNavigation(
             composable(AppRoute.Notes.route) {
                 NoteListRoute(
                     externalCommand = noteListCommand,
+                    onExternalCommandConsumed = { sequence ->
+                        if (noteListCommand?.sequence == sequence) noteListCommand = null
+                    },
                     onCreateClick = { initialTag ->
                         if (initialTag.isNullOrBlank()) {
                             navController.navigate(AppRoute.Editor.route)

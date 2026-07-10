@@ -72,12 +72,14 @@ fun NoteListRoute(
     onNoteClick: (Long) -> Unit,
     onSettingsClick: () -> Unit,
     externalCommand: NoteListExternalCommand? = null,
+    onExternalCommandConsumed: (Long) -> Unit = {},
     viewModel: NoteListViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsState()
     NoteListScreen(
         state = state,
         externalCommand = externalCommand,
+        onExternalCommandConsumed = onExternalCommandConsumed,
         onCreateClick = onCreateClick,
         onNoteClick = onNoteClick,
         onSettingsClick = onSettingsClick,
@@ -99,6 +101,7 @@ fun NoteListRoute(
 fun NoteListScreen(
     state: NoteListState,
     externalCommand: NoteListExternalCommand? = null,
+    onExternalCommandConsumed: (Long) -> Unit = {},
     onCreateClick: (String?) -> Unit,
     onNoteClick: (Long) -> Unit,
     onSettingsClick: () -> Unit,
@@ -138,7 +141,7 @@ fun NoteListScreen(
         val scopedNotes = when {
             selectedFilter == FILTER_DELETED -> state.deletedNotes
             selectedFilter == FILTER_ARCHIVED -> state.archivedNotes
-            selectedFilter == FILTER_TODO -> state.notes.filter { it.type == NoteType.Todo && !it.isDone }
+            selectedFilter == FILTER_TODO -> state.notes.filter { it.type == NoteType.Todo }
             selectedFilter == FILTER_DONE -> state.notes.filter { it.type == NoteType.Todo && it.isDone }
             selectedFilter == FILTER_PINNED -> state.notes.filter { it.pinned }
             selectedTag != null -> state.notes.filter { note ->
@@ -219,6 +222,18 @@ fun NoteListScreen(
                 tagPanelOpen = false
                 exitSelection()
             }
+            is NoteListExternalCommand.ShowTodos -> {
+                selectedFilter = FILTER_TODO
+                searchQuery = ""
+                tagPanelOpen = false
+                exitSelection()
+            }
+            is NoteListExternalCommand.ShowDone -> {
+                selectedFilter = FILTER_DONE
+                searchQuery = ""
+                tagPanelOpen = false
+                exitSelection()
+            }
             is NoteListExternalCommand.ShowNoteList -> {
                 selectedFilter = FILTER_ALL
                 searchQuery = ""
@@ -226,6 +241,7 @@ fun NoteListScreen(
                 exitSelection()
             }
         }
+        externalCommand?.let { onExternalCommandConsumed(it.sequence) }
     }
 
     LaunchedEffect(pinnedHomeTagId, state.tags) {

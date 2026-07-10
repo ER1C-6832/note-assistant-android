@@ -10,4 +10,6 @@ sealed interface UiCommand {
     data object ShowArchive : UiCommand
     data object ShowTrash : UiCommand
     data object ShowPinned : UiCommand
+    data object ShowTodos : UiCommand
+    data object ShowDone : UiCommand
 }

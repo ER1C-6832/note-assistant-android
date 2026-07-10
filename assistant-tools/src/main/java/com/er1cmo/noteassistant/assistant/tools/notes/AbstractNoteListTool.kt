@@ -48,12 +48,14 @@ abstract class AbstractNoteListTool(
             return McpToolResult.invalidJson(name, argumentsJson, "参数不是有效 JSON：${error.message ?: "解析失败"}")
         }
         val limit = parser.int("limit", 20).coerceIn(1, 100)
-        val notes = loadNotes().sortedWith(compareByDescending<Note> { it.updatedAt }.thenByDescending { it.id }).take(limit)
+        val notes = loadNotes()
+            .sortedWith(compareByDescending<Note> { it.updatedAt }.thenByDescending { it.id })
+            .take(limit)
         buildUiCommand(notes = notes, parser = parser)?.let { command ->
             uiCommandBus?.emit(command)
         }
         return McpToolResult.success(
-            message = "已列出 ${notes.size} 条便签",
+            message = notes.toAssistantReadableListMessage(spokenLabel()),
             resultJson = JSONObject()
                 .putAssistantNoteReferenceRule()
                 .put("kind", listKind)
@@ -76,11 +78,13 @@ abstract class AbstractNoteListTool(
 
     protected open fun uiEffectName(): String = "none"
 
+    protected open fun spokenLabel(): String = title.substringBefore('，').substringBefore('。')
+
     protected open fun nextStepHint(notes: List<Note>): String {
         return if (notes.isEmpty()) {
             "The list result is empty. Do not loop search/list tools; answer that there are no notes in this scope."
         } else {
-            "The list result and matching UI were updated. Do not call an extra ui.show_* tool unless the user explicitly asks again."
+            "The list result already contains titles and content summaries. Summarize these results and do not call another list/search tool."
         }
     }
 }

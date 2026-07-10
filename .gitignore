@@ -44,3 +44,4 @@ local.properties
 *.aab
 
 scripts/
+.phase4_real_tool_fix_backup/
