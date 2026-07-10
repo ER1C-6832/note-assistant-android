@@ -167,6 +167,17 @@ class XiaozhiWebSocketClient @Inject constructor(
         return sendSessionPayload(payload)
     }
 
+    fun sendAbort(
+        reason: String = "no_speech",
+        onEvent: (XiaozhiWebSocketEvent) -> Unit = {},
+    ): Boolean {
+        val currentSession = sessionId
+        if (currentSession.isBlank()) return false
+        val payload = messageBuilder.abort(currentSession, reason)
+        onEvent(XiaozhiWebSocketEvent.OutgoingText(payload))
+        return sendSessionPayload(payload)
+    }
+
     fun sendMcpResponse(responseJson: String, onEvent: (XiaozhiWebSocketEvent) -> Unit = {}): Boolean {
         val currentSession = sessionId
         if (currentSession.isBlank()) return false

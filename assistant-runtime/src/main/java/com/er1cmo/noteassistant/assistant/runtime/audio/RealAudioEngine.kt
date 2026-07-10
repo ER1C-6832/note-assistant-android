@@ -21,7 +21,7 @@ data class VoiceCaptureConfig(
     val suppressUplinkDuringPlayback: Boolean = false,
 ) {
     companion object {
-        val Manual = VoiceCaptureConfig()
+        val Manual = VoiceCaptureConfig(activityConfig = VoiceActivityConfig.manualMonitoring())
         fun streaming(idleTimeoutMs: Long): VoiceCaptureConfig = VoiceCaptureConfig(
             activityConfig = VoiceActivityConfig.streaming(idleTimeoutMs),
             stopOnEndOfSpeech = true,
@@ -56,6 +56,7 @@ class RealAudioEngine @Inject constructor() {
     @Volatile private var squareSum: Double = 0.0
     @Volatile private var sampleCount: Long = 0L
     @Volatile private var silentFrames: Int = 0
+    @Volatile private var speechSeen: Boolean = false
     @Volatile private var captureGeneration: Long = 0L
 
     private var downlinkDecoder: AndroidOpusDecoder? = null
@@ -96,6 +97,7 @@ class RealAudioEngine @Inject constructor() {
         squareSum = 0.0
         sampleCount = 0L
         silentFrames = 0
+        speechSeen = false
         processingSummary = "真实 AudioRecord / OpusEncoder 启动中"
 
         recordingJob = scope.launch {
@@ -105,6 +107,7 @@ class RealAudioEngine @Inject constructor() {
             var encoder: AndroidOpusEncoder? = null
             var automaticStopReason: VoiceAutomaticStopReason? = null
             var suppressedPlaybackFrames = 0
+            val preSpeechPackets = ArrayDeque<ByteArray>()
             val activityDetector = captureConfig.activityConfig
                 .takeIf { it.enabled }
                 ?.let(::VoiceActivityDetector)
@@ -132,6 +135,7 @@ class RealAudioEngine @Inject constructor() {
 
                     val activity = activityDetector?.processPcm16(buffer)
                     if (activity != null) {
+                        if (activity.speechSeen) speechSeen = true
                         onVoiceActivity(activity)
                         when (activity.state) {
                             VoiceActivityState.EndOfSpeech -> if (captureConfig.stopOnEndOfSpeech) {
@@ -161,6 +165,18 @@ class RealAudioEngine @Inject constructor() {
                         if (packet.isEmpty()) continue
                         synchronized(encodedFramesLock) { encodedFrames += packet }
                         opusFrames += 1
+
+                        if (captureConfig.activityConfig.enabled && !speechSeen) {
+                            preSpeechPackets.addLast(packet)
+                            while (preSpeechPackets.size > PRE_SPEECH_BUFFER_PACKETS) {
+                                preSpeechPackets.removeFirst()
+                            }
+                            continue
+                        }
+
+                        while (preSpeechPackets.isNotEmpty()) {
+                            if (!onEncodedFrame(preSpeechPackets.removeFirst())) failedUploads += 1
+                        }
                         if (!onEncodedFrame(packet)) failedUploads += 1
                     }
                 }
@@ -176,9 +192,15 @@ class RealAudioEngine @Inject constructor() {
                         if (packet.isNotEmpty()) {
                             synchronized(encodedFramesLock) { encodedFrames += packet }
                             opusFrames += 1
-                            if (!onEncodedFrame(packet)) failedUploads += 1
+                            if (speechSeen || !captureConfig.activityConfig.enabled) {
+                                while (preSpeechPackets.isNotEmpty()) {
+                                    if (!onEncodedFrame(preSpeechPackets.removeFirst())) failedUploads += 1
+                                }
+                                if (!onEncodedFrame(packet)) failedUploads += 1
+                            }
                         }
                     }
+                    preSpeechPackets.clear()
                 }
                 automaticStopReason?.let(onAutomaticStop)
             }
@@ -233,9 +255,10 @@ class RealAudioEngine @Inject constructor() {
             peakAbs = peakAbs,
             rms = rms,
             silentRatioPercent = if (pcmFrames <= 0) 0 else silentFrames * 100 / pcmFrames,
+            speechSeen = speechSeen,
             summary = buildString {
                 append("真实音频停止：PCM $pcmFrames 帧，Opus $opusFrames 帧，上传失败 $failedUploads，停止耗时 ${latency}ms")
-                append("，peak=$peakAbs, rms=$rms")
+                append("，peak=$peakAbs, rms=$rms, speechSeen=$speechSeen")
                 if (!completed) append("，录音线程未在 ${maxStopLatencyMs}ms 内退出")
                 lastError?.let { append("，error=$it") }
             },
@@ -356,6 +379,7 @@ class RealAudioEngine @Inject constructor() {
     private companion object {
         const val MAX_STOP_LATENCY_MS = 1_500L
         const val SILENCE_PEAK_THRESHOLD = 500
+        const val PRE_SPEECH_BUFFER_PACKETS = 15
     }
 }
 
@@ -380,6 +404,7 @@ data class RealAudioStopResult(
     val peakAbs: Int = 0,
     val rms: Int = 0,
     val silentRatioPercent: Int = 0,
+    val speechSeen: Boolean = false,
     val summary: String,
 )
 

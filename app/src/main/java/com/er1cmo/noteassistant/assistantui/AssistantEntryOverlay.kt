@@ -12,6 +12,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -35,14 +36,18 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.graphicsLayer
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
@@ -50,6 +55,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -70,6 +76,7 @@ import com.er1cmo.noteassistant.assistant.runtime.toolcall.ToolCallUiState
 import com.er1cmo.noteassistant.assistant.runtime.toolcall.ToolCallUiStatus
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -100,6 +107,17 @@ fun AssistantEntryOverlay(
         Manifest.permission.RECORD_AUDIO,
     ) == PackageManager.PERMISSION_GRANTED
 
+    LaunchedEffect(
+        uiState.toolCall.visible,
+        uiState.toolCall.updatedAtMillis,
+        uiState.toolCall.status,
+    ) {
+        if (uiState.toolCall.visible && uiState.toolCall.status.shouldAutoDismiss()) {
+            delay(TOOL_FEEDBACK_AUTO_DISMISS_MS)
+            viewModel.dismissToolCall()
+        }
+    }
+
     Column(
         modifier = modifier,
         horizontalAlignment = Alignment.End,
@@ -116,7 +134,6 @@ fun AssistantEntryOverlay(
                 uiState = uiState,
                 onCollapse = viewModel::collapse,
                 onEnableClick = viewModel::toggleAssistantEnabled,
-                onModeClick = viewModel::toggleRuntimeMode,
                 onActivateClick = viewModel::activateCurrentRuntime,
                 onConnectClick = viewModel::connectOrDisconnect,
                 onInputChange = viewModel::setInputText,
@@ -328,8 +345,28 @@ private fun AssistantOperationBanner(
     onDismiss: () -> Unit,
 ) {
     val accent = toolCall.status.bannerAccent()
+    val density = LocalDensity.current
+    val dismissThresholdPx = with(density) { 96.dp.toPx() }
+    var dragOffsetX by remember(toolCall.updatedAtMillis) { mutableFloatStateOf(0f) }
     Surface(
-        modifier = Modifier.width(306.dp),
+        modifier = Modifier
+            .width(306.dp)
+            .graphicsLayer {
+                translationX = dragOffsetX
+                alpha = (1f - abs(dragOffsetX) / (dismissThresholdPx * 2f)).coerceIn(0.35f, 1f)
+            }
+            .pointerInput(toolCall.updatedAtMillis) {
+                detectHorizontalDragGestures(
+                    onDragCancel = { dragOffsetX = 0f },
+                    onDragEnd = {
+                        if (abs(dragOffsetX) >= dismissThresholdPx) onDismiss() else dragOffsetX = 0f
+                    },
+                    onHorizontalDrag = { change, dragAmount ->
+                        change.consume()
+                        dragOffsetX += dragAmount
+                    },
+                )
+            },
         shape = RoundedCornerShape(22.dp),
         color = Color(0xFF111827).copy(alpha = 0.88f),
         shadowElevation = 10.dp,
@@ -383,7 +420,6 @@ private fun AssistantExpandedPanel(
     uiState: AssistantEntryUiState,
     onCollapse: () -> Unit,
     onEnableClick: () -> Unit,
-    onModeClick: () -> Unit,
     onActivateClick: () -> Unit,
     onConnectClick: () -> Unit,
     onInputChange: (String) -> Unit,
@@ -477,11 +513,8 @@ private fun AssistantExpandedPanel(
                 OutlinedButton(onClick = onEnableClick, modifier = Modifier.weight(1f)) {
                     Text(if (uiState.state.assistantEnabled) "关闭" else "启用")
                 }
-                OutlinedButton(onClick = onModeClick, modifier = Modifier.weight(1f)) {
-                    Text(if (uiState.state.isRealRuntime) "切 Fake" else "切 Real")
-                }
                 OutlinedButton(onClick = onActivateClick, modifier = Modifier.weight(1f)) {
-                    Text("激活")
+                    Text("激活 Real")
                 }
             }
 
@@ -595,8 +628,7 @@ data class AssistantEntryUiState(
             state.phase == AssistantPhase.Reconnecting ||
             state.connection == AssistantConnectionStatus.Connecting -> "连接"
         state.connection == AssistantConnectionStatus.Connected -> "在线"
-        state.runtimeMode == AssistantRuntimeMode.Real -> "Real"
-        else -> "Fake"
+        else -> "待命"
     }
     val statusLine: String = buildString {
         append(enabledLabel)
@@ -666,25 +698,11 @@ class AssistantEntryViewModel @Inject constructor(
         }
     }
 
-    fun toggleRuntimeMode() {
-        viewModelScope.launch {
-            ensureEnabled()
-            if (assistantController.state.value.isRealRuntime) {
-                assistantController.useFakeRuntime()
-            } else {
-                assistantController.useRealRuntime()
-            }
-        }
-    }
-
     fun activateCurrentRuntime() {
         viewModelScope.launch {
             ensureEnabled()
-            if (assistantController.state.value.runtimeMode == AssistantRuntimeMode.Real) {
-                assistantController.runRealActivation()
-            } else {
-                assistantController.runFakeActivation()
-            }
+            ensureRealRuntime()
+            assistantController.runRealActivation()
         }
     }
 
@@ -694,6 +712,7 @@ class AssistantEntryViewModel @Inject constructor(
             if (assistantController.state.value.isConnected) {
                 assistantController.disconnect(reason = "assistant_entry_overlay")
             } else {
+                ensureRealRuntime()
                 assistantController.connect()
             }
         }
@@ -704,6 +723,7 @@ class AssistantEntryViewModel @Inject constructor(
         if (text.isBlank()) return
         viewModelScope.launch {
             ensureEnabled()
+            ensureRealRuntime()
             if (!assistantController.state.value.isConnected) {
                 assistantController.connect()
             }
@@ -714,6 +734,7 @@ class AssistantEntryViewModel @Inject constructor(
     fun startPushToTalk(hasRecordAudioPermission: Boolean) {
         viewModelScope.launch {
             ensureEnabled()
+            ensureRealRuntime()
             if (!assistantController.state.value.isConnected) {
                 assistantController.connect()
             }
@@ -733,6 +754,7 @@ class AssistantEntryViewModel @Inject constructor(
     fun startStreamingConversation(hasRecordAudioPermission: Boolean) {
         viewModelScope.launch {
             ensureEnabled()
+            ensureRealRuntime()
             assistantController.startStreamingConversation(
                 hasRecordAudioPermission = hasRecordAudioPermission,
                 source = com.er1cmo.noteassistant.assistant.runtime.state.AssistantEntrySource.StreamingButton,
@@ -755,6 +777,12 @@ class AssistantEntryViewModel @Inject constructor(
     private suspend fun ensureEnabled() {
         if (!assistantController.state.value.assistantEnabled) {
             assistantController.enableAssistant()
+        }
+    }
+
+    private suspend fun ensureRealRuntime() {
+        if (!assistantController.state.value.isRealRuntime) {
+            assistantController.useRealRuntime()
         }
     }
 }
@@ -839,6 +867,17 @@ private fun AssistantState.toAuroraTarget(): AuroraTarget {
             motion = AuroraMotion.Disabled,
         )
     }
+}
+
+private fun ToolCallUiStatus.shouldAutoDismiss(): Boolean = when (this) {
+    ToolCallUiStatus.Success,
+    ToolCallUiStatus.Failed,
+    ToolCallUiStatus.PartialSuccess,
+    ToolCallUiStatus.Blocked,
+    ToolCallUiStatus.NotImplemented -> true
+    ToolCallUiStatus.Idle,
+    ToolCallUiStatus.Running,
+    ToolCallUiStatus.RequiresConfirmation -> false
 }
 
 private fun ToolCallUiStatus.bannerAccent(): Color = when (this) {
@@ -935,6 +974,8 @@ private data class AuroraTarget(
     val colorC: Color? = null,
     val motion: AuroraMotion,
 )
+
+private const val TOOL_FEEDBACK_AUTO_DISMISS_MS = 3_000L
 
 private val ColorMistyBlue = Color(0xFF3A86FF)
 private val ColorLilac = Color(0xFF8338EC)

@@ -75,6 +75,8 @@ class LocalAssistantController @Inject constructor(
     private var streamingNextTurnJob: Job? = null
     private var streamingResponseWatchdogJob: Job? = null
     private var pttWakeWordResumeJob: Job? = null
+    private var responsePlaybackIdleJob: Job? = null
+    private var pttResponseExpected: Boolean = false
 
     override val state: StateFlow<AssistantState> = mutableState.asStateFlow()
 
@@ -110,6 +112,8 @@ class LocalAssistantController @Inject constructor(
     }
 
     override suspend fun disableAssistant() {
+        responsePlaybackIdleJob?.cancel()
+        pttResponseExpected = false
         stopStreamingConversationInternal("assistant_disabled", resumeWakeWord = false)
         releaseAssistantMicrophone("assistant_disabled", resumeWakeWord = false)
         settingsRepository.setAssistantEnabled(false)
@@ -250,6 +254,8 @@ class LocalAssistantController @Inject constructor(
     }
 
     override suspend fun reconnect() {
+        responsePlaybackIdleJob?.cancel()
+        pttResponseExpected = false
         stopStreamingConversationInternal("manual_reconnect", resumeWakeWord = false)
         releaseAssistantMicrophone("manual_reconnect", resumeWakeWord = false)
         realAudioEngine.cancel()
@@ -269,6 +275,8 @@ class LocalAssistantController @Inject constructor(
     }
 
     override suspend fun disconnect(reason: String) {
+        responsePlaybackIdleJob?.cancel()
+        pttResponseExpected = false
         stopStreamingConversationInternal(reason, resumeWakeWord = true)
         releaseAssistantMicrophone(reason, resumeWakeWord = false)
         realAudioEngine.cancel()
@@ -359,6 +367,7 @@ class LocalAssistantController @Inject constructor(
     override suspend fun startPushToTalk(hasRecordAudioPermission: Boolean) {
         pttGeneration += 1L
         val generation = pttGeneration
+        pttResponseExpected = false
         if (!hasRecordAudioPermission) {
             realAudioEngine.cancel()
             mutableState.value = stateMachine.error(
@@ -495,12 +504,44 @@ class LocalAssistantController @Inject constructor(
             }
         } finally {
             releaseAssistantMicrophone("push_to_talk_released", resumeWakeWord = false)
-            schedulePushToTalkWakeWordResume(RESPONSE_FALLBACK_RESUME_MS)
+            if (pttResponseExpected) {
+                schedulePushToTalkWakeWordResume(RESPONSE_FALLBACK_RESUME_MS)
+            } else {
+                assistantTurnContextStore.clear()
+                mutableState.value = mutableState.value.copy(
+                    phase = if (mutableState.value.isConnected) AssistantPhase.Connected else AssistantPhase.Idle,
+                    audio = AssistantAudioStatus.Idle,
+                    activeEntrySource = null,
+                    statusText = "未检测到有效语音，本轮已取消",
+                    lastEventAt = nowMillis(),
+                )
+                wakeWordAudioGate.resumeAfterAssistant("按住说话未检测到有效语音")
+            }
         }
     }
 
     private suspend fun stopFakePushToTalk() {
         val stoppedAudio = realAudioEngine.stopRecordingAndAwait(maxStopLatencyMs = 300L)
+        if (!stoppedAudio.speechSeen) {
+            fakeWebSocketClient.sendStopListening()
+            pttResponseExpected = false
+            assistantTurnContextStore.clear()
+            mutableState.value = mutableState.value.copy(
+                runtimeMode = AssistantRuntimeMode.Fake,
+                fakeRuntime = true,
+                phase = if (mutableState.value.isConnected) AssistantPhase.Connected else AssistantPhase.Idle,
+                audio = AssistantAudioStatus.Idle,
+                activeEntrySource = null,
+                statusText = "Fake PTT 未检测到有效语音，本轮已取消",
+                audioCapturedFrames = stoppedAudio.pcmFrames,
+                audioEncodedFrames = stoppedAudio.opusFrames,
+                audioUploadedFrames = fakeWebSocketClient.uploadedAudioFrameCount(),
+                lastAudioSummary = stoppedAudio.summary,
+                lastEventAt = nowMillis(),
+            )
+            return
+        }
+        pttResponseExpected = true
         val listenStop = fakeWebSocketClient.sendStopListening()
         val stopped = stateMachine.stopListening(mutableState.value, nowMillis())
         mutableState.value = stopped.copy(
@@ -549,7 +590,31 @@ class LocalAssistantController @Inject constructor(
 
     private suspend fun stopRealPushToTalk() {
         val stoppedAudio = realAudioEngine.stopRecordingAndAwait(maxStopLatencyMs = 300L)
+        if (!stoppedAudio.speechSeen) {
+            val aborted = realWebSocketClient.sendAbort(
+                reason = "ptt_no_speech",
+                onEvent = ::handleRealWebSocketEvent,
+            )
+            pttResponseExpected = false
+            assistantTurnContextStore.clear()
+            mutableState.value = mutableState.value.copy(
+                runtimeMode = AssistantRuntimeMode.Real,
+                fakeRuntime = false,
+                phase = if (mutableState.value.isConnected) AssistantPhase.Connected else AssistantPhase.Idle,
+                audio = AssistantAudioStatus.Idle,
+                activeEntrySource = null,
+                statusText = "未检测到有效语音，已取消本轮，abort=$aborted",
+                audioCapturedFrames = stoppedAudio.pcmFrames,
+                audioEncodedFrames = stoppedAudio.opusFrames,
+                audioUploadedFrames = realUploadedAudioFrames,
+                pushToTalkStopLatencyMs = stoppedAudio.stopLatencyMs,
+                lastAudioSummary = stoppedAudio.summary,
+                lastEventAt = nowMillis(),
+            )
+            return
+        }
         val listenStopped = realWebSocketClient.sendStopListening(::handleRealWebSocketEvent)
+        pttResponseExpected = listenStopped
         val stopped = stateMachine.stopListening(mutableState.value, nowMillis())
         mutableState.value = stopped.copy(
             runtimeMode = AssistantRuntimeMode.Real,
@@ -763,23 +828,40 @@ class LocalAssistantController @Inject constructor(
         if (streamingFinalizedTurnToken == turnToken) return
         streamingFinalizedTurnToken = turnToken
         val stoppedAudio = realAudioEngine.stopRecordingAndAwait(maxStopLatencyMs = 1_500L)
-        val listenStopped = realWebSocketClient.sendStopListening(::handleRealWebSocketEvent)
         releaseAssistantMicrophone("streaming_turn_audio_released", resumeWakeWord = false)
 
         if (reason == VoiceAutomaticStopReason.NoSpeechTimeout) {
+            val aborted = realWebSocketClient.sendAbort(
+                reason = "streaming_no_speech_timeout",
+                onEvent = ::handleRealWebSocketEvent,
+            )
             mutableState.value = mutableState.value.copy(
+                phase = if (mutableState.value.isConnected) AssistantPhase.Connected else AssistantPhase.Idle,
                 audio = AssistantAudioStatus.Idle,
                 streamingConversationState = StreamingConversationState.Stopping,
                 vadState = VoiceActivityState.NoSpeechTimeout,
                 vadStatusText = "等待用户语音超过 ${mutableState.value.streamingIdleTimeoutMs}ms",
-                statusText = "流式对话空闲超时，正在结束",
+                statusText = "未检测到语音，流式对话已取消，abort=$aborted",
                 lastAudioSummary = stoppedAudio.summary,
             )
-            stopStreamingConversationInternal("streaming_idle_timeout", resumeWakeWord = true)
+            stopStreamingConversationInternal(
+                reason = "streaming_idle_timeout",
+                resumeWakeWord = true,
+                finalizeTransport = false,
+            )
             return
         }
 
-        val hasUsefulAudio = stoppedAudio.opusFrames >= MIN_STREAMING_OPUS_PACKETS
+        val hasUsefulAudio = stoppedAudio.speechSeen &&
+            stoppedAudio.opusFrames >= MIN_STREAMING_OPUS_PACKETS
+        val transportSent = if (hasUsefulAudio) {
+            realWebSocketClient.sendStopListening(::handleRealWebSocketEvent)
+        } else {
+            realWebSocketClient.sendAbort(
+                reason = "streaming_empty_turn",
+                onEvent = ::handleRealWebSocketEvent,
+            )
+        }
         mutableState.value = stateMachine.stopListening(mutableState.value, nowMillis()).copy(
             runtimeMode = AssistantRuntimeMode.Real,
             fakeRuntime = false,
@@ -794,7 +876,7 @@ class LocalAssistantController @Inject constructor(
             vadState = VoiceActivityState.EndOfSpeech,
             vadStatusText = "VAD 已提交第 ${mutableState.value.streamingTurnIndex} 轮",
             statusText = if (hasUsefulAudio) {
-                "流式对话已自动发送 listen/stop=$listenStopped，等待回复"
+                "流式对话已自动提交，transport_sent=$transportSent，等待回复"
             } else {
                 "本轮有效语音不足，准备重新聆听"
             },
@@ -844,6 +926,7 @@ class LocalAssistantController @Inject constructor(
     private suspend fun stopStreamingConversationInternal(
         reason: String,
         resumeWakeWord: Boolean,
+        finalizeTransport: Boolean = true,
     ) {
         val wasActive = mutableState.value.streamingSessionActive
         streamingFinalizedTurnToken = streamingTurnToken
@@ -852,17 +935,29 @@ class LocalAssistantController @Inject constructor(
         streamingNextTurnJob = null
         streamingResponseWatchdogJob?.cancel()
         streamingResponseWatchdogJob = null
+        responsePlaybackIdleJob?.cancel()
+        responsePlaybackIdleJob = null
         if (wasActive) {
             mutableState.value = mutableState.value.copy(
                 streamingConversationState = StreamingConversationState.Stopping,
                 statusText = "正在结束流式对话：$reason",
             )
         }
-        if (realAudioEngine.isRecording()) {
+        val wasRecording = realAudioEngine.isRecording()
+        val stoppedAudio = if (wasRecording) {
             realAudioEngine.stopRecordingAndAwait(maxStopLatencyMs = 1_500L)
+        } else {
+            null
         }
-        if (wasActive && realWebSocketClient.isConnected()) {
-            realWebSocketClient.sendStopListening(::handleRealWebSocketEvent)
+        if (wasActive && realWebSocketClient.isConnected() && finalizeTransport) {
+            if (stoppedAudio?.speechSeen == true) {
+                realWebSocketClient.sendStopListening(::handleRealWebSocketEvent)
+            } else {
+                realWebSocketClient.sendAbort(
+                    reason = "streaming_cancel:${reason.take(48)}",
+                    onEvent = ::handleRealWebSocketEvent,
+                )
+            }
         }
         releaseAssistantMicrophone("streaming_stopped:$reason", resumeWakeWord = false)
         val stoppedConversationId = mutableState.value.streamingSessionId
@@ -887,6 +982,7 @@ class LocalAssistantController @Inject constructor(
             statusText = if (wasActive) "流式对话已结束：$reason" else mutableState.value.statusText,
             lastEventAt = nowMillis(),
         )
+        pttResponseExpected = false
         if (resumeWakeWord) {
             wakeWordAudioGate.resumeAfterAssistant("流式对话已结束：$reason")
         }
@@ -947,9 +1043,51 @@ class LocalAssistantController @Inject constructor(
         pttWakeWordResumeJob = scope.launch {
             delay(delayMs)
             if (!mutableState.value.streamingSessionActive && !realAudioEngine.isRecording()) {
+                responsePlaybackIdleJob?.cancel()
+                realAudioEngine.stopPlaybackAndRelease()
                 assistantTurnContextStore.clear()
-                mutableState.value = mutableState.value.copy(activeEntrySource = null)
+                mutableState.value = mutableState.value.copy(
+                    phase = if (mutableState.value.isConnected) AssistantPhase.Connected else AssistantPhase.Idle,
+                    audio = AssistantAudioStatus.Idle,
+                    activeEntrySource = null,
+                    statusText = if (mutableState.value.isConnected) "助手回复完成，在线待命" else "助手回复完成，待命",
+                    lastEventAt = nowMillis(),
+                )
+                pttResponseExpected = false
                 wakeWordAudioGate.resumeAfterAssistant("按住说话回复已完成或超时")
+            }
+        }
+    }
+
+    private fun schedulePlaybackIdleCompletion() {
+        responsePlaybackIdleJob?.cancel()
+        responsePlaybackIdleJob = scope.launch {
+            delay(RESPONSE_PLAYBACK_IDLE_MS)
+            val current = mutableState.value
+            if (current.phase != AssistantPhase.Speaking && current.audio != AssistantAudioStatus.Playing) {
+                return@launch
+            }
+            realAudioEngine.stopPlaybackAndRelease()
+            if (current.streamingSessionActive) {
+                mutableState.value = current.copy(
+                    phase = AssistantPhase.Connected,
+                    audio = AssistantAudioStatus.Idle,
+                    streamingConversationState = StreamingConversationState.WaitingForNextTurn,
+                    statusText = "助手回复播放完成，准备下一轮",
+                    lastEventAt = nowMillis(),
+                )
+                scheduleNextStreamingTurn(streamingGeneration, STREAMING_TTS_RESUME_MS)
+            } else {
+                assistantTurnContextStore.clear()
+                mutableState.value = current.copy(
+                    phase = if (current.isConnected) AssistantPhase.Connected else AssistantPhase.Idle,
+                    audio = AssistantAudioStatus.Idle,
+                    activeEntrySource = null,
+                    statusText = if (current.isConnected) "助手回复完成，在线待命" else "助手回复完成，待命",
+                    lastEventAt = nowMillis(),
+                )
+                pttResponseExpected = false
+                wakeWordAudioGate.resumeAfterAssistant("回复音频空闲，恢复待命")
             }
         }
     }
@@ -1226,6 +1364,7 @@ class LocalAssistantController @Inject constructor(
                 val ended = event.state == "stop" || event.state == "end"
                 val streamingActive = base.streamingSessionActive
                 if (ended) {
+                    responsePlaybackIdleJob?.cancel()
                     realAudioEngine.stopPlaybackAndRelease()
                     mutableState.value = base.copy(
                         phase = AssistantPhase.Connected,
@@ -1235,7 +1374,7 @@ class LocalAssistantController @Inject constructor(
                         } else {
                             base.streamingConversationState
                         },
-                        statusText = "真实 TTS state=${event.state}",
+                        statusText = if (streamingActive) "助手回复完成，准备下一轮" else "助手回复完成，在线待命",
                     )
                     if (streamingActive) {
                         scheduleNextStreamingTurn(streamingGeneration, STREAMING_TTS_RESUME_MS)
@@ -1243,6 +1382,7 @@ class LocalAssistantController @Inject constructor(
                         schedulePushToTalkWakeWordResume(RESPONSE_TTS_RESUME_MS)
                     }
                 } else {
+                    responsePlaybackIdleJob?.cancel()
                     streamingNextTurnJob?.cancel()
                     pttWakeWordResumeJob?.cancel()
                     mutableState.value = base.copy(
@@ -1255,6 +1395,7 @@ class LocalAssistantController @Inject constructor(
                         },
                         statusText = "真实 TTS state=${event.state}",
                     )
+                    schedulePlaybackIdleCompletion()
                 }
             }
             is ProtocolEvent.ListenState -> {
@@ -1322,10 +1463,13 @@ class LocalAssistantController @Inject constructor(
                 statusText = if (playback.success) "真实服务端 audio/TTS 已解码并写入 AudioTrack" else "真实服务端音频帧已收到，等待可播放 PCM",
                 lastEventAt = nowMillis(),
             )
+            if (playback.success) schedulePlaybackIdleCompletion()
         }
     }
 
     private suspend fun handleTransportClosed(closed: XiaozhiWebSocketEvent.Closed) {
+        responsePlaybackIdleJob?.cancel()
+        pttResponseExpected = false
         realAudioEngine.cancel()
         val current = mutableState.value
         val decision = reconnectPolicy.decideClose(
@@ -1396,5 +1540,6 @@ class LocalAssistantController @Inject constructor(
         const val RESPONSE_TEXT_RESUME_MS = 3_000L
         const val RESPONSE_TTS_RESUME_MS = 500L
         const val RESPONSE_FALLBACK_RESUME_MS = 12_000L
+        const val RESPONSE_PLAYBACK_IDLE_MS = 1_500L
     }
 }

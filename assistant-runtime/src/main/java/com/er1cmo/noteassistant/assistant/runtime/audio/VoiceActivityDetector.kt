@@ -11,12 +11,22 @@ data class VoiceActivityConfig(
     val silencePeakThreshold: Int = 1_050,
     val silenceRmsThreshold: Int = 260,
     val minSpeechFrames: Int = 3,
-    val trailingSilenceMs: Long = 900L,
+    val trailingSilenceMs: Long = 1_200L,
     val warmupMs: Long = 160L,
     val noSpeechTimeoutMs: Long = 15_000L,
 ) {
     companion object {
         val Disabled = VoiceActivityConfig(enabled = false)
+
+        /**
+         * PTT 也启用活动监测，但不自动停止。这样可以区分“用户确实说过话”
+         * 与“只打开了麦克风但没有说话”，并为首字保留预滚音频。
+         */
+        fun manualMonitoring(): VoiceActivityConfig = VoiceActivityConfig(
+            enabled = true,
+            noSpeechTimeoutMs = 60_000L,
+        )
+
         fun streaming(noSpeechTimeoutMs: Long): VoiceActivityConfig = VoiceActivityConfig(
             enabled = true,
             noSpeechTimeoutMs = noSpeechTimeoutMs,
