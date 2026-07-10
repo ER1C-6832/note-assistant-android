@@ -15,6 +15,7 @@ class WakeWordServiceController @Inject constructor(
     @ApplicationContext private val context: Context,
     private val settingsRepository: WakeWordSettingsRepository,
     private val coordinator: WakeWordCoordinator,
+    private val customPhraseTester: WakeWordCustomPhraseTester,
 ) : WakeWordAudioGate {
     suspend fun setEnabled(enabled: Boolean) {
         settingsRepository.setEnabled(enabled)
@@ -32,6 +33,48 @@ class WakeWordServiceController @Inject constructor(
 
     suspend fun setPreset(preset: WakeWordPreset) {
         settingsRepository.setPreset(preset.name)
+        updateIfEnabled()
+    }
+
+    suspend fun verifyCustomPhrase(
+        candidate: WakeWordPronunciationCandidate,
+    ): WakeWordCustomCheckResult {
+        val settings = settingsRepository.current()
+        val resumeAfter = shouldTemporarilyPause(settings.enabled)
+        if (resumeAfter && !pauseForAssistant("检查自定义唤醒词可用性")) {
+            return WakeWordCustomCheckResult(false, "正式 KWS 未及时释放麦克风，检查已取消。")
+        }
+        return try {
+            customPhraseTester.verifyStream(
+                candidate = candidate,
+                sensitivity = WakeWordSensitivity.fromName(settings.sensitivity),
+            )
+        } finally {
+            if (resumeAfter) resumeAfterAssistant("自定义唤醒词检查完成")
+        }
+    }
+
+    suspend fun testCustomPhrase(
+        candidate: WakeWordPronunciationCandidate,
+    ): WakeWordCustomTestResult {
+        val settings = settingsRepository.current()
+        val resumeAfter = shouldTemporarilyPause(settings.enabled)
+        if (resumeAfter && !pauseForAssistant("自定义唤醒词本机测试")) {
+            return WakeWordCustomTestResult(false, message = "正式 KWS 未及时释放麦克风，本机测试已取消。")
+        }
+        return try {
+            customPhraseTester.listenForPhrase(
+                candidate = candidate,
+                sensitivity = WakeWordSensitivity.fromName(settings.sensitivity),
+            )
+        } finally {
+            if (resumeAfter) resumeAfterAssistant("自定义唤醒词本机测试完成")
+        }
+    }
+
+    suspend fun saveCustomPhrase(candidate: WakeWordPronunciationCandidate) {
+        require(candidate.displayText.length in 2..6) { "自定义唤醒词必须为 2～6 个汉字" }
+        settingsRepository.saveCustomPhrase(candidate.displayText, candidate.grammar)
         updateIfEnabled()
     }
 
@@ -98,6 +141,15 @@ class WakeWordServiceController @Inject constructor(
 
     suspend fun resetStatistics() {
         settingsRepository.resetStatistics()
+    }
+
+    private fun shouldTemporarilyPause(enabled: Boolean): Boolean {
+        if (!enabled) return false
+        return coordinator.state.value.serviceState in setOf(
+            WakeWordServiceState.Starting,
+            WakeWordServiceState.Initializing,
+            WakeWordServiceState.Listening,
+        )
     }
 
     private suspend fun updateIfEnabled() {

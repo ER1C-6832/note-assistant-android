@@ -28,6 +28,7 @@ kapt {
 }
 
 dependencies {
+    implementation("com.belerweb:pinyin4j:2.5.1")
     implementation(project(":core-common"))
     implementation(project(":app-settings"))
     implementation(libs.androidx.core.ktx)

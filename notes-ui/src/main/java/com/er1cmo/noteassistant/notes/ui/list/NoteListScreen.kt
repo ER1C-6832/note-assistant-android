@@ -27,6 +27,8 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -45,6 +47,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -52,6 +55,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.er1cmo.noteassistant.notes.domain.model.Note
 import com.er1cmo.noteassistant.notes.domain.model.NoteType
 import com.er1cmo.noteassistant.notes.domain.model.Tag
+import com.er1cmo.noteassistant.notes.ui.R
 import com.er1cmo.noteassistant.notes.ui.components.NoteCard
 
 private const val FILTER_ALL = "全部"
@@ -532,8 +536,18 @@ private fun HeaderBar(onSettingsClick: () -> Unit, textColor: Color) {
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
-        Surface(onClick = onSettingsClick, shape = CircleShape, color = Color.White.copy(alpha = 0.96f), shadowElevation = 2.dp, tonalElevation = 1.dp) {
-            Text("设置", modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp), color = Color(0xFF667085), style = MaterialTheme.typography.labelMedium)
+        Surface(shape = CircleShape, color = Color.White.copy(alpha = 0.96f), shadowElevation = 2.dp, tonalElevation = 1.dp) {
+            IconButton(
+                onClick = onSettingsClick,
+                modifier = Modifier.size(48.dp),
+            ) {
+                Icon(
+                    painter = painterResource(R.drawable.ic_settings_gear),
+                    contentDescription = "设置",
+                    modifier = Modifier.size(22.dp),
+                    tint = textColor.copy(alpha = 0.74f),
+                )
+            }
         }
     }
 }

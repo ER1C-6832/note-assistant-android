@@ -10,14 +10,23 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.hilt.navigation.compose.hiltViewModel
+import com.er1cmo.noteassistant.assistant.wakeword.WakeWordPhraseType
 import com.er1cmo.noteassistant.assistant.wakeword.WakeWordPreset
 import com.er1cmo.noteassistant.assistant.wakeword.WakeWordSensitivity
 import com.er1cmo.noteassistant.assistant.wakeword.WakeWordServiceState
@@ -34,7 +43,14 @@ internal fun WakeWordSettingsBox(
     onResume: () -> Unit,
     onMarkFalseTrigger: () -> Unit,
     onResetStats: () -> Unit,
+    customViewModel: CustomWakeWordViewModel = hiltViewModel(),
 ) {
+    val customState by customViewModel.state.collectAsState()
+    var customEditorOpen by rememberSaveable { mutableStateOf(state.phraseType == WakeWordPhraseType.Custom) }
+    LaunchedEffect(state.phraseType) {
+        if (state.phraseType == WakeWordPhraseType.Custom) customEditorOpen = true
+    }
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -55,7 +71,7 @@ internal fun WakeWordSettingsBox(
                     color = Color(0xFF222832),
                 )
                 Text(
-                    text = "Phase5-01：命中后仅显示状态，不连接服务器、不启动助手录音。",
+                    text = "预设与自定义词均在本机 sherpa-onnx 中检测，不上传唤醒音频。",
                     style = MaterialTheme.typography.bodySmall,
                     color = Color(0xFF697386),
                 )
@@ -79,7 +95,7 @@ internal fun WakeWordSettingsBox(
             fontWeight = FontWeight.Medium,
         )
 
-        Text("预设", style = MaterialTheme.typography.labelLarge)
+        Text("唤醒词", style = MaterialTheme.typography.labelLarge)
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -87,17 +103,93 @@ internal fun WakeWordSettingsBox(
             WakeWordPreset.values().forEach { preset ->
                 PresetChoiceButton(
                     text = preset.displayName,
-                    selected = state.preset == preset,
+                    selected = state.phraseType == WakeWordPhraseType.Preset && state.preset == preset,
                     modifier = Modifier.weight(1f),
-                    onClick = { onPresetChange(preset) },
+                    onClick = {
+                        customEditorOpen = false
+                        onPresetChange(preset)
+                    },
                 )
             }
         }
-        Text(
-            text = state.preset.description,
-            style = MaterialTheme.typography.bodySmall,
-            color = Color(0xFF697386),
+        PresetChoiceButton(
+            text = "自定义",
+            selected = state.phraseType == WakeWordPhraseType.Custom,
+            modifier = Modifier.fillMaxWidth(),
+            onClick = { customEditorOpen = true },
         )
+
+        if (customEditorOpen) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(Color(0xFFF7F8FC), RoundedCornerShape(14.dp))
+                    .padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text("自定义唤醒词", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                Text(
+                    "仅支持 2～6 个常用汉字。数字、标点、空格和中英文混合会被拒绝。校验失败不会覆盖当前配置。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color(0xFF697386),
+                )
+                OutlinedTextField(
+                    value = customState.inputText,
+                    onValueChange = customViewModel::setInputText,
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("自定义文字") },
+                    placeholder = { Text("例如：你好小泓") },
+                    singleLine = true,
+                )
+
+                if (customState.candidates.isNotEmpty()) {
+                    Text("读音候选", style = MaterialTheme.typography.labelLarge)
+                    customState.candidates.forEachIndexed { index, candidate ->
+                        PresetChoiceButton(
+                            text = "${index + 1}. ${candidate.pronunciationLabel}",
+                            selected = customState.selectedCandidateId == candidate.id,
+                            modifier = Modifier.fillMaxWidth(),
+                            onClick = { customViewModel.selectCandidate(candidate.id) },
+                        )
+                    }
+                }
+
+                Text(
+                    text = customState.statusText,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (customState.error) Color(0xFFB42318) else Color(0xFF344054),
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    OutlinedButton(
+                        modifier = Modifier.weight(1f),
+                        enabled = !customState.isChecking && !customState.isTesting && !customState.isSaving,
+                        onClick = customViewModel::checkAvailability,
+                    ) { Text(if (customState.isChecking) "检查中" else "检查可用性", maxLines = 1) }
+                    OutlinedButton(
+                        modifier = Modifier.weight(1f),
+                        enabled = customState.canTest,
+                        onClick = customViewModel::runLocalTest,
+                    ) { Text(if (customState.isTesting) "测试中" else "本机测试", maxLines = 1) }
+                    Button(
+                        modifier = Modifier.weight(1f),
+                        enabled = customState.canSave,
+                        onClick = customViewModel::save,
+                    ) { Text(if (customState.isSaving) "保存中" else "保存", maxLines = 1) }
+                }
+                if (customState.testPassed) {
+                    Text("✓ 本机说话测试已通过", color = Color(0xFF067647), style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        } else {
+            Text(
+                text = state.preset.description,
+                style = MaterialTheme.typography.bodySmall,
+                color = Color(0xFF697386),
+            )
+        }
 
         Text("灵敏度", style = MaterialTheme.typography.labelLarge)
         Row(
@@ -174,12 +266,6 @@ internal fun WakeWordSettingsBox(
                 onClick = onResetStats,
             ) { Text("清空统计") }
         }
-
-        Text(
-            text = "自定义唤醒词的数据模型已建立，本阶段 UI 只开放三个已验证预设。",
-            style = MaterialTheme.typography.bodySmall,
-            color = Color(0xFF697386),
-        )
     }
 }
 
