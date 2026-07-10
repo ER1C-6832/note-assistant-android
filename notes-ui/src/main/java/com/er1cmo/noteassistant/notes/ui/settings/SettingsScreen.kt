@@ -3,6 +3,7 @@ package com.er1cmo.noteassistant.notes.ui.settings
 import android.Manifest
 import android.content.pm.PackageManager
 import android.graphics.Color as AndroidColor
+import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
@@ -44,6 +45,10 @@ import androidx.lifecycle.viewModelScope
 import com.er1cmo.noteassistant.app.settings.SettingsRepository
 import com.er1cmo.noteassistant.assistant.runtime.controller.AssistantController
 import com.er1cmo.noteassistant.assistant.runtime.state.AssistantState
+import com.er1cmo.noteassistant.assistant.wakeword.WakeWordCoordinator
+import com.er1cmo.noteassistant.assistant.wakeword.WakeWordPreset
+import com.er1cmo.noteassistant.assistant.wakeword.WakeWordSensitivity
+import com.er1cmo.noteassistant.assistant.wakeword.WakeWordServiceController
 import com.er1cmo.noteassistant.notes.domain.command.CommandResult
 import com.er1cmo.noteassistant.notes.domain.command.CommandSource
 import com.er1cmo.noteassistant.notes.domain.command.NoteCommandService
@@ -64,11 +69,46 @@ fun SettingsRoute(
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsState()
+    val wakeWordState by viewModel.wakeWordState.collectAsState()
     val context = LocalContext.current
+
+    fun hasPermission(permission: String): Boolean = ContextCompat.checkSelfPermission(
+        context,
+        permission,
+    ) == PackageManager.PERMISSION_GRANTED
     val microphonePermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission(),
     ) { granted ->
         viewModel.startPtt(hasRecordAudioPermission = granted)
+    }
+    val wakeWordPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions(),
+    ) {
+        val microphoneGranted = hasPermission(Manifest.permission.RECORD_AUDIO)
+        val notificationGranted = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+            hasPermission(Manifest.permission.POST_NOTIFICATIONS)
+        viewModel.setWakeWordEnabled(microphoneGranted && notificationGranted)
+    }
+    val setWakeWordEnabled: (Boolean) -> Unit = { enabled ->
+        if (!enabled) {
+            viewModel.setWakeWordEnabled(false)
+        } else {
+            val missing = buildList {
+                if (!hasPermission(Manifest.permission.RECORD_AUDIO)) {
+                    add(Manifest.permission.RECORD_AUDIO)
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                    !hasPermission(Manifest.permission.POST_NOTIFICATIONS)
+                ) {
+                    add(Manifest.permission.POST_NOTIFICATIONS)
+                }
+            }
+            if (missing.isEmpty()) {
+                viewModel.setWakeWordEnabled(true)
+            } else {
+                wakeWordPermissionLauncher.launch(missing.toTypedArray())
+            }
+        }
     }
     val startPushToTalk: () -> Unit = {
         val alreadyGranted = ContextCompat.checkSelfPermission(
@@ -112,6 +152,19 @@ fun SettingsRoute(
                 selectedHex = state.tagDrawerBackgroundColor,
                 options = tagDrawerBackgroundOptions,
                 onSelect = viewModel::setTagDrawerBackgroundColor,
+            )
+
+            SectionTitle("Phase5-01 本地唤醒词")
+            WakeWordSettingsBox(
+                state = wakeWordState,
+                onEnabledChange = setWakeWordEnabled,
+                onPresetChange = viewModel::setWakeWordPreset,
+                onSensitivityChange = viewModel::setWakeWordSensitivity,
+                onCooldownChange = viewModel::setWakeWordCooldown,
+                onPause = viewModel::pauseWakeWord,
+                onResume = viewModel::resumeWakeWord,
+                onMarkFalseTrigger = viewModel::markWakeWordFalseTrigger,
+                onResetStats = viewModel::resetWakeWordStats,
             )
 
             SectionTitle("Phase3/Phase4 助手运行时")
@@ -173,7 +226,10 @@ class SettingsViewModel @Inject constructor(
     private val noteCommandService: NoteCommandService,
     private val commandTraceRepository: CommandTraceRepository,
     private val assistantController: AssistantController,
+    private val wakeWordServiceController: WakeWordServiceController,
+    private val wakeWordCoordinator: WakeWordCoordinator,
 ) : ViewModel() {
+    val wakeWordState = wakeWordCoordinator.state
     private val toolName = MutableStateFlow("notes.create")
     private val argumentsJson = MutableStateFlow("{\"title\":\"Phase2 模拟创建\",\"content\":\"从本地工具模拟器创建\",\"type\":\"normal\",\"tags\":[\"Phase2\"]}")
     private val isRunning = MutableStateFlow(false)
@@ -261,6 +317,14 @@ class SettingsViewModel @Inject constructor(
 
     fun setHomeBackgroundColor(hex: String) { viewModelScope.launch { settingsRepository.setHomeBackgroundColor(hex) } }
     fun setTagDrawerBackgroundColor(hex: String) { viewModelScope.launch { settingsRepository.setTagDrawerBackgroundColor(hex) } }
+    fun setWakeWordEnabled(enabled: Boolean) { viewModelScope.launch { wakeWordServiceController.setEnabled(enabled) } }
+    fun setWakeWordPreset(preset: WakeWordPreset) { viewModelScope.launch { wakeWordServiceController.setPreset(preset) } }
+    fun setWakeWordSensitivity(sensitivity: WakeWordSensitivity) { viewModelScope.launch { wakeWordServiceController.setSensitivity(sensitivity) } }
+    fun setWakeWordCooldown(cooldownMs: Long) { viewModelScope.launch { wakeWordServiceController.setCooldownMs(cooldownMs) } }
+    fun pauseWakeWord() { wakeWordServiceController.pause() }
+    fun resumeWakeWord() { viewModelScope.launch { wakeWordServiceController.resume() } }
+    fun markWakeWordFalseTrigger() { viewModelScope.launch { wakeWordServiceController.markFalseTrigger() } }
+    fun resetWakeWordStats() { viewModelScope.launch { wakeWordServiceController.resetStatistics() } }
     fun setAssistantTextInput(value: String) { assistantTextInput.value = value }
     fun setPhase4ToolName(value: String) { phase4ToolName.value = value }
     fun setPhase4ArgumentsJson(value: String) { phase4ArgumentsJson.value = value }
