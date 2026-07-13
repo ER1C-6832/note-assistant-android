@@ -13,12 +13,14 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -50,6 +52,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
@@ -210,52 +213,75 @@ private fun ActivationCodeCard(uiState: AssistantEntryUiState) {
 private fun ConversationTranscriptCard(uiState: AssistantEntryUiState) {
     val userText = uiState.state.lastUserText.orEmpty().trim()
     val assistantText = uiState.state.lastAssistantText.orEmpty().trim()
+    val density = LocalDensity.current
+    val configuration = LocalConfiguration.current
+    val maxLeftPx = with(density) {
+        (configuration.screenWidthDp - 72).coerceAtLeast(120).dp.toPx()
+    }
+    val maxUpPx = with(density) {
+        (configuration.screenHeightDp - 140).coerceAtLeast(240).dp.toPx()
+    }
+    val maxDownPx = with(density) { 72.dp.toPx() }
+    var dragOffsetX by remember { mutableFloatStateOf(0f) }
+    var dragOffsetY by remember { mutableFloatStateOf(0f) }
+
     Surface(
-        modifier = Modifier.widthIn(max = 332.dp),
+        modifier = Modifier
+            .widthIn(min = 260.dp, max = 320.dp)
+            .heightIn(max = 210.dp)
+            .graphicsLayer {
+                translationX = dragOffsetX
+                translationY = dragOffsetY
+            },
         shape = RoundedCornerShape(22.dp),
         color = Color(0xFFF7FAFF),
         shadowElevation = 6.dp,
         border = BorderStroke(1.dp, Color(0xFFD9E4F4)),
     ) {
-        Column(
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Text(
-                text = "对话文字",
-                style = MaterialTheme.typography.labelLarge,
-                fontWeight = FontWeight.SemiBold,
-                color = Color(0xFF334155),
+        Column {
+            DraggablePanelHeader(
+                title = "对话文字",
+                onDrag = { dragAmount ->
+                    dragOffsetX = (dragOffsetX + dragAmount.x).coerceIn(-maxLeftPx, 0f)
+                    dragOffsetY = (dragOffsetY + dragAmount.y).coerceIn(-maxUpPx, maxDownPx)
+                },
             )
-            if (userText.isBlank() && assistantText.isBlank()) {
-                Text(
-                    text = "语音识别和助手回复会显示在这里",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = Color(0xFF7B8798),
-                )
-            }
-            if (userText.isNotBlank()) {
-                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text("你", style = MaterialTheme.typography.labelSmall, color = Color(0xFF60738E))
+            Column(
+                modifier = Modifier.padding(start = 14.dp, end = 14.dp, bottom = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                if (userText.isBlank() && assistantText.isBlank()) {
                     Text(
-                        text = userText,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = Color(0xFF243247),
-                        maxLines = 4,
+                        text = "语音识别和助手回复会显示在这里",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color(0xFF7B8798),
+                        maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
-            }
-            if (assistantText.isNotBlank()) {
-                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text("小智", style = MaterialTheme.typography.labelSmall, color = Color(0xFF6C5FB3))
-                    Text(
-                        text = assistantText,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = Color(0xFF2F2948),
-                        maxLines = 6,
-                        overflow = TextOverflow.Ellipsis,
-                    )
+                if (userText.isNotBlank()) {
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text("你", style = MaterialTheme.typography.labelSmall, color = Color(0xFF60738E))
+                        Text(
+                            text = userText,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = Color(0xFF243247),
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+                if (assistantText.isNotBlank()) {
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text("小智", style = MaterialTheme.typography.labelSmall, color = Color(0xFF6C5FB3))
+                        Text(
+                            text = assistantText,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = Color(0xFF2F2948),
+                            maxLines = 4,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
                 }
             }
         }
@@ -268,32 +294,90 @@ private fun AssistantTextInputCard(
     onInputChange: (String) -> Unit,
     onSendClick: () -> Unit,
 ) {
+    val density = LocalDensity.current
+    val configuration = LocalConfiguration.current
+    val maxLeftPx = with(density) {
+        (configuration.screenWidthDp - 72).coerceAtLeast(120).dp.toPx()
+    }
+    val maxUpPx = with(density) {
+        (configuration.screenHeightDp - 140).coerceAtLeast(240).dp.toPx()
+    }
+    val maxDownPx = with(density) { 72.dp.toPx() }
+    var dragOffsetX by remember { mutableFloatStateOf(0f) }
+    var dragOffsetY by remember { mutableFloatStateOf(0f) }
+
     Surface(
-        modifier = Modifier.widthIn(max = 332.dp),
+        modifier = Modifier
+            .widthIn(min = 276.dp, max = 320.dp)
+            .graphicsLayer {
+                translationX = dragOffsetX
+                translationY = dragOffsetY
+            },
         shape = RoundedCornerShape(22.dp),
         color = Color(0xFFFFFDF7),
         shadowElevation = 6.dp,
         border = BorderStroke(1.dp, Color(0xFFE9DFC9)),
     ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            OutlinedTextField(
-                value = inputText,
-                onValueChange = onInputChange,
-                modifier = Modifier.weight(1f),
-                singleLine = true,
-                placeholder = { Text("输入文字消息") },
+        Column {
+            DraggablePanelHeader(
+                title = "文字输入",
+                onDrag = { dragAmount ->
+                    dragOffsetX = (dragOffsetX + dragAmount.x).coerceIn(-maxLeftPx, 0f)
+                    dragOffsetY = (dragOffsetY + dragAmount.y).coerceIn(-maxUpPx, maxDownPx)
+                },
             )
-            Button(
-                onClick = onSendClick,
-                enabled = inputText.isNotBlank(),
+            Row(
+                modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Text("发送")
+                OutlinedTextField(
+                    value = inputText,
+                    onValueChange = onInputChange,
+                    modifier = Modifier.weight(1f),
+                    singleLine = true,
+                    placeholder = { Text("输入文字消息") },
+                )
+                Button(
+                    onClick = onSendClick,
+                    enabled = inputText.isNotBlank(),
+                ) {
+                    Text("发送")
+                }
             }
         }
+    }
+}
+
+@Composable
+private fun DraggablePanelHeader(
+    title: String,
+    onDrag: (Offset) -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .pointerInput(title) {
+                detectDragGestures { change, dragAmount ->
+                    change.consume()
+                    onDrag(dragAmount)
+                }
+            }
+            .padding(horizontal = 14.dp, vertical = 9.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.SemiBold,
+            color = Color(0xFF334155),
+        )
+        Text(
+            text = "拖动标题可移动",
+            style = MaterialTheme.typography.labelSmall,
+            color = Color(0xFF7B8798),
+        )
     }
 }
 
