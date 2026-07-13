@@ -18,10 +18,7 @@ data class VoiceActivityConfig(
     companion object {
         val Disabled = VoiceActivityConfig(enabled = false)
 
-        /**
-         * PTT 也启用活动监测，但不自动停止。这样可以区分“用户确实说过话”
-         * 与“只打开了麦克风但没有说话”，并为首字保留预滚音频。
-         */
+        /** PTT 只做活动监测，不自动停止。 */
         fun manualMonitoring(): VoiceActivityConfig = VoiceActivityConfig(
             enabled = true,
             noSpeechTimeoutMs = 60_000L,
@@ -30,6 +27,22 @@ data class VoiceActivityConfig(
         fun streaming(noSpeechTimeoutMs: Long): VoiceActivityConfig = VoiceActivityConfig(
             enabled = true,
             noSpeechTimeoutMs = noSpeechTimeoutMs,
+        )
+
+        /**
+         * TTS 插话监听使用更长预热、更高门槛和更多连续语音帧，
+         * 尽量避免把扬声器回声或单个噪声脉冲误判成用户插话。
+         */
+        fun bargeInMonitoring(): VoiceActivityConfig = VoiceActivityConfig(
+            enabled = true,
+            speechPeakThreshold = 1_800,
+            speechRmsThreshold = 380,
+            silencePeakThreshold = 1_250,
+            silenceRmsThreshold = 300,
+            minSpeechFrames = 8,
+            trailingSilenceMs = 1_200L,
+            warmupMs = 650L,
+            noSpeechTimeoutMs = 120_000L,
         )
     }
 }

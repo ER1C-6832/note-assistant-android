@@ -172,6 +172,7 @@ fun SettingsRoute(
             VoiceConversationSettingsBox(
                 state = state.assistantState,
                 onModeChange = viewModel::setVoiceInteractionMode,
+                onBargeInEnabledChange = viewModel::setStreamingBargeInEnabled,
             )
 
             SectionTitle("Phase3/Phase4 助手运行时")
@@ -325,6 +326,7 @@ class SettingsViewModel @Inject constructor(
     fun setHomeBackgroundColor(hex: String) { viewModelScope.launch { settingsRepository.setHomeBackgroundColor(hex) } }
     fun setTagDrawerBackgroundColor(hex: String) { viewModelScope.launch { settingsRepository.setTagDrawerBackgroundColor(hex) } }
     fun setVoiceInteractionMode(mode: VoiceInteractionMode) { viewModelScope.launch { assistantController.setVoiceInteractionMode(mode) } }
+    fun setStreamingBargeInEnabled(enabled: Boolean) { viewModelScope.launch { assistantController.setStreamingBargeInEnabled(enabled) } }
     fun setWakeWordEnabled(enabled: Boolean) { viewModelScope.launch { wakeWordServiceController.setEnabled(enabled) } }
     fun setWakeWordPreset(preset: WakeWordPreset) { viewModelScope.launch { wakeWordServiceController.setPreset(preset) } }
     fun setWakeWordSensitivity(sensitivity: WakeWordSensitivity) { viewModelScope.launch { wakeWordServiceController.setSensitivity(sensitivity) } }

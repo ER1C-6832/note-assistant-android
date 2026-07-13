@@ -28,6 +28,13 @@ data class VoiceCaptureConfig(
             stopOnNoSpeechTimeout = true,
             suppressUplinkDuringPlayback = true,
         )
+
+        fun bargeInMonitoring(): VoiceCaptureConfig = VoiceCaptureConfig(
+            activityConfig = VoiceActivityConfig.bargeInMonitoring(),
+            stopOnEndOfSpeech = true,
+            stopOnNoSpeechTimeout = false,
+            suppressUplinkDuringPlayback = true,
+        )
     }
 }
 

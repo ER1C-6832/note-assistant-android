@@ -91,6 +91,9 @@ data class AssistantState(
     val streamingSessionId: String? = null,
     val streamingTurnIndex: Int = 0,
     val streamingIdleTimeoutMs: Long = 15_000L,
+    val streamingBargeInEnabled: Boolean = false,
+    val bargeInMonitorActive: Boolean = false,
+    val bargeInTriggerCount: Int = 0,
     val vadState: VoiceActivityState = VoiceActivityState.Disabled,
     val vadStatusText: String = "VAD 未启用",
 ) {

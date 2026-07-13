@@ -10,8 +10,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -23,6 +25,7 @@ import com.er1cmo.noteassistant.assistant.runtime.state.VoiceInteractionMode
 internal fun VoiceConversationSettingsBox(
     state: AssistantState,
     onModeChange: (VoiceInteractionMode) -> Unit,
+    onBargeInEnabledChange: (Boolean) -> Unit,
 ) {
     Column(
         modifier = Modifier
@@ -38,7 +41,7 @@ internal fun VoiceConversationSettingsBox(
             color = Color(0xFF222832),
         )
         Text(
-            text = "Phase5-02：按住说话保持单轮；流式对话单点启停，VAD 自动提交并进入下一轮。",
+            text = "按住说话保持单轮；流式对话单点启停，VAD 自动提交并进入下一轮。",
             style = MaterialTheme.typography.bodySmall,
             color = Color(0xFF697386),
         )
@@ -61,8 +64,32 @@ internal fun VoiceConversationSettingsBox(
             )
         }
 
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("允许对话中插话", style = MaterialTheme.typography.labelLarge)
+                Text(
+                    text = "仅在流式会话播放 TTS 时监听用户起声；命中后停止回复并继续本轮。默认关闭。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color(0xFF697386),
+                )
+            }
+            Switch(
+                checked = state.streamingBargeInEnabled,
+                onCheckedChange = onBargeInEnabledChange,
+            )
+        }
+
         Text(
             text = "当前=${state.preferredVoiceMode.label} · session=${state.streamingConversationState.storageValue} · mic=${state.microphoneOwner.name}",
+            style = MaterialTheme.typography.bodySmall,
+            color = Color(0xFF344054),
+        )
+        Text(
+            text = "插话=${if (state.streamingBargeInEnabled) "开启" else "关闭"} · monitor=${state.bargeInMonitorActive} · count=${state.bargeInTriggerCount}",
             style = MaterialTheme.typography.bodySmall,
             color = Color(0xFF344054),
         )
@@ -72,7 +99,7 @@ internal fun VoiceConversationSettingsBox(
             color = Color(0xFF344054),
         )
         Text(
-            text = "本阶段流式入口仅由按钮启动；唤醒词命中仍不会自动连接助手。",
+            text = "KWS 在整个流式会话中仍保持暂停；插话只由流式音频 VAD 负责。",
             style = MaterialTheme.typography.bodySmall,
             color = Color(0xFF697386),
         )

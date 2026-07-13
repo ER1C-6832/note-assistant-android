@@ -18,6 +18,7 @@ interface AssistantController {
     suspend fun sendText(text: String)
 
     suspend fun setVoiceInteractionMode(mode: VoiceInteractionMode)
+    suspend fun setStreamingBargeInEnabled(enabled: Boolean)
     suspend fun startPushToTalk(hasRecordAudioPermission: Boolean)
     suspend fun stopPushToTalk()
     suspend fun startStreamingConversation(

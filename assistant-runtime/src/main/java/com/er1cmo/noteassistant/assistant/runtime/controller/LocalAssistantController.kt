@@ -77,6 +77,10 @@ class LocalAssistantController @Inject constructor(
     private var pttWakeWordResumeJob: Job? = null
     private var responsePlaybackIdleJob: Job? = null
     private var pttResponseExpected: Boolean = false
+    @Volatile private var bargeInTriggered: Boolean = false
+    @Volatile private var bargeInStarting: Boolean = false
+    private var bargeInMonitorToken: Long = -1L
+    private var bargeInMonitorGeneration: Long = 0L
 
     override val state: StateFlow<AssistantState> = mutableState.asStateFlow()
 
@@ -96,6 +100,7 @@ class LocalAssistantController @Inject constructor(
                 mutableState.value = mutableState.value.copy(
                     preferredVoiceMode = VoiceInteractionMode.fromStorage(settings.defaultMode),
                     streamingIdleTimeoutMs = settings.streamingIdleTimeoutMs,
+                    streamingBargeInEnabled = settings.streamingBargeInEnabled,
                 )
             }
         }
@@ -656,6 +661,18 @@ class LocalAssistantController @Inject constructor(
         )
     }
 
+    override suspend fun setStreamingBargeInEnabled(enabled: Boolean) {
+        voiceConversationSettingsRepository.setStreamingBargeInEnabled(enabled)
+        if (!enabled) {
+            stopBargeInMonitor("barge_in_disabled")
+        }
+        mutableState.value = mutableState.value.copy(
+            streamingBargeInEnabled = enabled,
+            statusText = if (enabled) "流式 TTS 插话已开启" else "流式 TTS 插话已关闭",
+            lastEventAt = nowMillis(),
+        )
+    }
+
     override suspend fun startStreamingConversation(
         hasRecordAudioPermission: Boolean,
         source: AssistantEntrySource,
@@ -689,6 +706,7 @@ class LocalAssistantController @Inject constructor(
             streamingSessionActive = true,
             streamingSessionId = conversationSessionId,
             streamingTurnIndex = 0,
+            bargeInMonitorActive = false,
             vadState = VoiceActivityState.Warmup,
             vadStatusText = "流式对话正在准备第一轮",
             statusText = if (wakeKeyword.isNullOrBlank()) {
@@ -708,6 +726,7 @@ class LocalAssistantController @Inject constructor(
 
     private suspend fun startStreamingTurn(generation: Long) {
         if (!isStreamingGenerationActive(generation)) return
+        if (bargeInMonitorToken >= 0L) stopBargeInMonitor("normal_streaming_turn_start")
         if (!mutableState.value.isConnected || !realWebSocketClient.isConnected()) connectReal()
         if (!isStreamingGenerationActive(generation)) return
         if (!mutableState.value.isConnected || !realWebSocketClient.isConnected()) {
@@ -827,6 +846,13 @@ class LocalAssistantController @Inject constructor(
         if (!isStreamingGenerationActive(generation) || streamingTurnToken != turnToken) return
         if (streamingFinalizedTurnToken == turnToken) return
         streamingFinalizedTurnToken = turnToken
+        val finalizedBargeIn = bargeInMonitorToken == turnToken
+        if (finalizedBargeIn) {
+            bargeInMonitorGeneration += 1L
+            bargeInMonitorToken = -1L
+            bargeInTriggered = false
+            bargeInStarting = false
+        }
         val stoppedAudio = realAudioEngine.stopRecordingAndAwait(maxStopLatencyMs = 1_500L)
         releaseAssistantMicrophone("streaming_turn_audio_released", resumeWakeWord = false)
 
@@ -868,6 +894,7 @@ class LocalAssistantController @Inject constructor(
             phase = if (hasUsefulAudio) AssistantPhase.Thinking else AssistantPhase.Connected,
             audio = AssistantAudioStatus.Idle,
             microphoneOwner = MicrophoneOwner.None,
+            bargeInMonitorActive = false,
             streamingConversationState = if (hasUsefulAudio) {
                 StreamingConversationState.Thinking
             } else {
@@ -937,6 +964,10 @@ class LocalAssistantController @Inject constructor(
         streamingResponseWatchdogJob = null
         responsePlaybackIdleJob?.cancel()
         responsePlaybackIdleJob = null
+        bargeInMonitorGeneration += 1L
+        bargeInMonitorToken = -1L
+        bargeInTriggered = false
+        bargeInStarting = false
         if (wasActive) {
             mutableState.value = mutableState.value.copy(
                 streamingConversationState = StreamingConversationState.Stopping,
@@ -977,6 +1008,7 @@ class LocalAssistantController @Inject constructor(
             streamingConversationState = StreamingConversationState.Inactive,
             streamingSessionActive = false,
             streamingSessionId = null,
+            bargeInMonitorActive = false,
             vadState = VoiceActivityState.Disabled,
             vadStatusText = "流式对话已结束：$reason",
             statusText = if (wasActive) "流式对话已结束：$reason" else mutableState.value.statusText,
@@ -986,6 +1018,217 @@ class LocalAssistantController @Inject constructor(
         if (resumeWakeWord) {
             wakeWordAudioGate.resumeAfterAssistant("流式对话已结束：$reason")
         }
+    }
+
+    private suspend fun startBargeInMonitor(generation: Long) {
+        val current = mutableState.value
+        if (!isStreamingGenerationActive(generation) ||
+            !current.streamingBargeInEnabled ||
+            current.bargeInMonitorActive ||
+            bargeInStarting ||
+            realAudioEngine.isRecording() ||
+            !realAudioEngine.isPlaybackActive()
+        ) {
+            return
+        }
+
+        bargeInStarting = true
+        try {
+            if (!prepareAssistantCapture(
+                    current.activeEntrySource ?: AssistantEntrySource.StreamingButton,
+                    "streaming_barge_in_monitor",
+                )
+            ) {
+                return
+            }
+            if (!isStreamingGenerationActive(generation) || !realAudioEngine.isPlaybackActive()) {
+                releaseAssistantMicrophone("barge_in_playback_already_finished", resumeWakeWord = false)
+                return
+            }
+
+            streamingTurnToken += 1L
+            val turnToken = streamingTurnToken
+            bargeInMonitorGeneration += 1L
+            val monitorGeneration = bargeInMonitorGeneration
+            bargeInMonitorToken = turnToken
+            bargeInTriggered = false
+            realUploadedAudioFrames = 0
+
+            val audioStart = realAudioEngine.startRecording(
+                nowMillis = nowMillis(),
+                onEncodedFrame = { packet ->
+                    if (!bargeInTriggered) {
+                        true
+                    } else {
+                        val sent = realWebSocketClient.sendAudioFrame(packet)
+                        if (sent) realUploadedAudioFrames += 1
+                        sent
+                    }
+                },
+                captureConfig = VoiceCaptureConfig.bargeInMonitoring(),
+                onVoiceActivity = { snapshot ->
+                    onBargeInVoiceActivity(
+                        snapshot = snapshot,
+                        streamingSessionGeneration = generation,
+                        turnToken = turnToken,
+                        monitorGeneration = monitorGeneration,
+                    )
+                },
+                onAutomaticStop = { reason ->
+                    scope.launch {
+                        handleBargeInAutomaticStop(
+                            reason = reason,
+                            streamingSessionGeneration = generation,
+                            turnToken = turnToken,
+                            monitorGeneration = monitorGeneration,
+                        )
+                    }
+                },
+            )
+            if (!audioStart.started) {
+                bargeInMonitorToken = -1L
+                releaseAssistantMicrophone("barge_in_audio_start_failed", resumeWakeWord = false)
+                mutableState.value = mutableState.value.copy(
+                    bargeInMonitorActive = false,
+                    statusText = "插话监听启动失败，继续播放当前回复",
+                    lastAudioSummary = audioStart.summary,
+                    lastEventAt = nowMillis(),
+                )
+                return
+            }
+
+            mutableState.value = mutableState.value.copy(
+                microphoneOwner = MicrophoneOwner.AssistantCapture,
+                bargeInMonitorActive = true,
+                vadState = VoiceActivityState.Warmup,
+                vadStatusText = "TTS 插话监听预热中",
+                statusText = "助手回复中，可直接说话插话",
+                lastAudioSummary = audioStart.summary,
+                lastEventAt = nowMillis(),
+            )
+        } finally {
+            bargeInStarting = false
+        }
+    }
+
+    private fun onBargeInVoiceActivity(
+        snapshot: VoiceActivitySnapshot,
+        streamingSessionGeneration: Long,
+        turnToken: Long,
+        monitorGeneration: Long,
+    ) {
+        if (!isStreamingGenerationActive(streamingSessionGeneration) ||
+            streamingTurnToken != turnToken ||
+            bargeInMonitorToken != turnToken ||
+            bargeInMonitorGeneration != monitorGeneration
+        ) {
+            return
+        }
+
+        mutableState.value = mutableState.value.copy(
+            vadState = snapshot.state,
+            vadStatusText = "插话 ${snapshot.state.storageValue} · peak=${snapshot.peakAbs} rms=${snapshot.rms} · ${snapshot.elapsedMs}ms",
+            lastEventAt = nowMillis(),
+        )
+        if (snapshot.state == VoiceActivityState.SpeechDetected && !bargeInTriggered) {
+            bargeInTriggered = true
+            scope.launch {
+                activateBargeIn(
+                    streamingSessionGeneration = streamingSessionGeneration,
+                    turnToken = turnToken,
+                    monitorGeneration = monitorGeneration,
+                )
+            }
+        }
+    }
+
+    private suspend fun activateBargeIn(
+        streamingSessionGeneration: Long,
+        turnToken: Long,
+        monitorGeneration: Long,
+    ) {
+        if (!isStreamingGenerationActive(streamingSessionGeneration) ||
+            streamingTurnToken != turnToken ||
+            bargeInMonitorToken != turnToken ||
+            bargeInMonitorGeneration != monitorGeneration
+        ) {
+            return
+        }
+
+        responsePlaybackIdleJob?.cancel()
+        streamingNextTurnJob?.cancel()
+        streamingResponseWatchdogJob?.cancel()
+        realAudioEngine.stopPlaybackAndRelease()
+        val aborted = realWebSocketClient.sendAbort(
+            reason = "streaming_barge_in",
+            onEvent = ::handleRealWebSocketEvent,
+        )
+        val listenStarted = realWebSocketClient.sendStartListening(
+            mode = "manual",
+            onEvent = ::handleRealWebSocketEvent,
+        )
+        if (!listenStarted) {
+            stopBargeInMonitor("barge_in_listen_start_failed")
+            stopStreamingConversationInternal(
+                reason = "barge_in_listen_start_failed",
+                resumeWakeWord = true,
+                finalizeTransport = false,
+            )
+            return
+        }
+
+        val nextTurn = mutableState.value.streamingTurnIndex + 1
+        mutableState.value = mutableState.value.copy(
+            phase = AssistantPhase.Listening,
+            audio = AssistantAudioStatus.Recording,
+            streamingConversationState = StreamingConversationState.UserSpeaking,
+            streamingTurnIndex = nextTurn,
+            bargeInMonitorActive = true,
+            bargeInTriggerCount = mutableState.value.bargeInTriggerCount + 1,
+            vadState = VoiceActivityState.SpeechDetected,
+            vadStatusText = "已检测到插话，正在接收第 $nextTurn 轮语音",
+            statusText = "已停止当前回复并进入插话，abort=$aborted",
+            lastEventAt = nowMillis(),
+        )
+    }
+
+    private suspend fun handleBargeInAutomaticStop(
+        reason: VoiceAutomaticStopReason,
+        streamingSessionGeneration: Long,
+        turnToken: Long,
+        monitorGeneration: Long,
+    ) {
+        if (!isStreamingGenerationActive(streamingSessionGeneration) ||
+            streamingTurnToken != turnToken ||
+            bargeInMonitorToken != turnToken ||
+            bargeInMonitorGeneration != monitorGeneration
+        ) {
+            return
+        }
+        if (!bargeInTriggered) {
+            stopBargeInMonitor("barge_in_monitor_finished_without_speech")
+            return
+        }
+        handleStreamingAutomaticStop(reason, streamingSessionGeneration, turnToken)
+    }
+
+    private suspend fun stopBargeInMonitor(reason: String) {
+        if (bargeInMonitorToken < 0L && !bargeInStarting) return
+        bargeInMonitorGeneration += 1L
+        bargeInMonitorToken = -1L
+        bargeInTriggered = false
+        bargeInStarting = false
+        if (realAudioEngine.isRecording()) {
+            realAudioEngine.stopRecordingAndAwait(maxStopLatencyMs = 1_500L)
+        }
+        releaseAssistantMicrophone("barge_in_monitor_stopped:$reason", resumeWakeWord = false)
+        mutableState.value = mutableState.value.copy(
+            bargeInMonitorActive = false,
+            microphoneOwner = MicrophoneOwner.None,
+            vadState = VoiceActivityState.Disabled,
+            vadStatusText = "插话监听已停止：$reason",
+            lastEventAt = nowMillis(),
+        )
     }
 
     private suspend fun prepareAssistantCapture(
@@ -1069,14 +1312,22 @@ class LocalAssistantController @Inject constructor(
             }
             realAudioEngine.stopPlaybackAndRelease()
             if (current.streamingSessionActive) {
-                mutableState.value = current.copy(
+                val generation = streamingGeneration
+                if (current.bargeInMonitorActive && !bargeInTriggered) {
+                    stopBargeInMonitor("playback_idle_without_barge_in")
+                }
+                val latest = mutableState.value
+                mutableState.value = latest.copy(
                     phase = AssistantPhase.Connected,
                     audio = AssistantAudioStatus.Idle,
+                    bargeInMonitorActive = false,
                     streamingConversationState = StreamingConversationState.WaitingForNextTurn,
                     statusText = "助手回复播放完成，准备下一轮",
                     lastEventAt = nowMillis(),
                 )
-                scheduleNextStreamingTurn(streamingGeneration, STREAMING_TTS_RESUME_MS)
+                if (isStreamingGenerationActive(generation) && !realAudioEngine.isRecording()) {
+                    scheduleNextStreamingTurn(generation, STREAMING_TTS_RESUME_MS)
+                }
             } else {
                 assistantTurnContextStore.clear()
                 mutableState.value = current.copy(
@@ -1271,6 +1522,14 @@ class LocalAssistantController @Inject constructor(
     }
 
     override suspend fun simulateAudioFailure(message: String) {
+        if (mutableState.value.streamingSessionActive) {
+            stopStreamingConversationInternal(
+                reason = "audio_failure",
+                resumeWakeWord = true,
+                finalizeTransport = false,
+            )
+        }
+        releaseAssistantMicrophone("audio_failure", resumeWakeWord = false)
         realAudioEngine.cancel()
         mutableState.value = stateMachine.error(
             current = mutableState.value.copy(audio = AssistantAudioStatus.Error),
@@ -1320,6 +1579,15 @@ class LocalAssistantController @Inject constructor(
                     lastProtocolEvent = event.javaClass.simpleName,
                     lastReconnectDecision = "real_websocket_error",
                 )
+                if (mutableState.value.streamingSessionActive) {
+                    scope.launch {
+                        stopStreamingConversationInternal(
+                            reason = "websocket_error",
+                            resumeWakeWord = true,
+                            finalizeTransport = false,
+                        )
+                    }
+                }
             }
         }
     }
@@ -1363,7 +1631,26 @@ class LocalAssistantController @Inject constructor(
             is ProtocolEvent.TtsState -> {
                 val ended = event.state == "stop" || event.state == "end"
                 val streamingActive = base.streamingSessionActive
-                if (ended) {
+                val receivingBargeIn = streamingActive && base.bargeInMonitorActive && bargeInTriggered
+                if (!ended && receivingBargeIn) {
+                    mutableState.value = base.copy(
+                        phase = AssistantPhase.Listening,
+                        audio = AssistantAudioStatus.Recording,
+                        streamingConversationState = StreamingConversationState.UserSpeaking,
+                        bargeInMonitorActive = true,
+                        statusText = "已忽略旧回复的迟到 TTS 状态，正在接收插话",
+                    )
+                } else if (ended && receivingBargeIn) {
+                    responsePlaybackIdleJob?.cancel()
+                    realAudioEngine.stopPlaybackAndRelease()
+                    mutableState.value = base.copy(
+                        phase = AssistantPhase.Listening,
+                        audio = AssistantAudioStatus.Recording,
+                        streamingConversationState = StreamingConversationState.UserSpeaking,
+                        bargeInMonitorActive = true,
+                        statusText = "旧回复已停止，正在接收插话",
+                    )
+                } else if (ended) {
                     responsePlaybackIdleJob?.cancel()
                     realAudioEngine.stopPlaybackAndRelease()
                     mutableState.value = base.copy(
@@ -1377,7 +1664,13 @@ class LocalAssistantController @Inject constructor(
                         statusText = if (streamingActive) "助手回复完成，准备下一轮" else "助手回复完成，在线待命",
                     )
                     if (streamingActive) {
-                        scheduleNextStreamingTurn(streamingGeneration, STREAMING_TTS_RESUME_MS)
+                        val generation = streamingGeneration
+                        scope.launch {
+                            stopBargeInMonitor("tts_finished_without_barge_in")
+                            if (isStreamingGenerationActive(generation) && !realAudioEngine.isRecording()) {
+                                scheduleNextStreamingTurn(generation, STREAMING_TTS_RESUME_MS)
+                            }
+                        }
                     } else {
                         schedulePushToTalkWakeWordResume(RESPONSE_TTS_RESUME_MS)
                     }
@@ -1395,6 +1688,10 @@ class LocalAssistantController @Inject constructor(
                         },
                         statusText = "真实 TTS state=${event.state}",
                     )
+                    if (streamingActive && base.streamingBargeInEnabled) {
+                        val generation = streamingGeneration
+                        scope.launch { startBargeInMonitor(generation) }
+                    }
                     schedulePlaybackIdleCompletion()
                 }
             }
@@ -1437,6 +1734,13 @@ class LocalAssistantController @Inject constructor(
     }
 
     private fun handleRealIncomingAudio(bytes: ByteArray) {
+        if (bargeInTriggered && mutableState.value.bargeInMonitorActive) {
+            mutableState.value = mutableState.value.copy(
+                statusText = "插话期间忽略旧回复的迟到音频包",
+                lastEventAt = nowMillis(),
+            )
+            return
+        }
         streamingNextTurnJob?.cancel()
         pttWakeWordResumeJob?.cancel()
         scope.launch {
@@ -1463,13 +1767,28 @@ class LocalAssistantController @Inject constructor(
                 statusText = if (playback.success) "真实服务端 audio/TTS 已解码并写入 AudioTrack" else "真实服务端音频帧已收到，等待可播放 PCM",
                 lastEventAt = nowMillis(),
             )
-            if (playback.success) schedulePlaybackIdleCompletion()
+            if (playback.success) {
+                schedulePlaybackIdleCompletion()
+                val current = mutableState.value
+                if (current.streamingSessionActive && current.streamingBargeInEnabled && !current.bargeInMonitorActive) {
+                    startBargeInMonitor(streamingGeneration)
+                }
+            }
         }
     }
 
     private suspend fun handleTransportClosed(closed: XiaozhiWebSocketEvent.Closed) {
         responsePlaybackIdleJob?.cancel()
         pttResponseExpected = false
+        val beforeCleanup = mutableState.value
+        if (beforeCleanup.streamingSessionActive) {
+            stopStreamingConversationInternal(
+                reason = "transport_closed",
+                resumeWakeWord = true,
+                finalizeTransport = false,
+            )
+        }
+        releaseAssistantMicrophone("transport_closed", resumeWakeWord = false)
         realAudioEngine.cancel()
         val current = mutableState.value
         val decision = reconnectPolicy.decideClose(
