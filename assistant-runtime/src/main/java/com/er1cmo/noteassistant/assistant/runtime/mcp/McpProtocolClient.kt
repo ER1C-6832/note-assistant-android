@@ -25,6 +25,7 @@ class McpProtocolClient @Inject constructor(
     constructor() : this(emptySet(), ToolCallEventStore())
 
     private val failClosedExecutor = FailClosedMcpToolExecutor()
+    private val requestDeduplicator = McpRequestDeduplicator(maxEntries = 64)
 
     fun toolsList(): List<McpToolDescriptor> = activeExecutor().listDescriptors()
 
@@ -64,7 +65,11 @@ class McpProtocolClient @Inject constructor(
                     descriptors = toolsList(),
                 ),
             )
-            "tools/call" -> handleToolsCall(request.payload, request.requestIdJson, request.method, context)
+            "tools/call" -> requestDeduplicator.getOrCompute(
+                request.requestIdJson?.let { id -> "${context.sessionId}|${context.conversationId}|$id" },
+            ) {
+                handleToolsCall(request.payload, request.requestIdJson, request.method, context)
+            }
             else -> McpProtocolResponse.error(
                 requestIdJson = request.requestIdJson,
                 method = request.method,

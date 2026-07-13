@@ -27,6 +27,11 @@ interface AssistantController {
         wakeKeyword: String? = null,
     )
     suspend fun stopStreamingConversation(reason: String = "user_stop")
+    suspend fun handleSystemAudioInterruption(
+        reason: String,
+        resumeWakeWord: Boolean = false,
+    )
+    suspend fun handleSystemAudioRecovered(reason: String = "system_audio_recovered")
 
     suspend fun simulateIncomingToolCall(toolName: String, argumentsJson: String = "{}")
     suspend fun simulateIncomingToolsList()

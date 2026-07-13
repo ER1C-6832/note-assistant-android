@@ -45,9 +45,11 @@ local.properties
 
 scripts/
 .phase4_real_tool_fix_backup/
+.phase5_*/
 .phase5_01_backup_*/
 .phase5_02_backup_*/
 .phase5_03_backup_*/
 .phase5_03_voice_polish_backup_*/
 .phase5_04_custom_wakeword_backup_*/
 .phase5_04_v2_backup_*/
+.phase5_04_v3_backup_*/

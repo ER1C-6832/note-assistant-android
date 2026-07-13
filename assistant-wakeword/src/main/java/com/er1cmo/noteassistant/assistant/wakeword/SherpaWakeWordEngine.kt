@@ -20,6 +20,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+private class WakeWordAudioReadException(readCode: Int) :
+    IllegalStateException("wakeword AudioRecord read failed repeatedly: $readCode")
+
 class SherpaWakeWordEngine(
     private val context: Context,
     private val config: WakeWordConfig,
@@ -96,18 +99,48 @@ class SherpaWakeWordEngine(
             ))
 
             val shortBuffer = ShortArray(config.samplesPerFrame)
+            var consecutiveReadFailures = 0
+            var framesSincePermissionCheck = 0
             while (running.get()) {
+                framesSincePermissionCheck += 1
+                if (framesSincePermissionCheck >= PERMISSION_RECHECK_FRAMES) {
+                    framesSincePermissionCheck = 0
+                    if (ContextCompat.checkSelfPermission(
+                            context,
+                            Manifest.permission.RECORD_AUDIO,
+                        ) != PackageManager.PERMISSION_GRANTED
+                    ) {
+                        throw SecurityException("RECORD_AUDIO permission revoked while KWS was running")
+                    }
+                }
                 val read = audioRecord.read(shortBuffer, 0, shortBuffer.size)
                 if (read <= 0) {
+                    consecutiveReadFailures += 1
+                    if (consecutiveReadFailures >= MAX_CONSECUTIVE_READ_FAILURES) {
+                        throw WakeWordAudioReadException(read)
+                    }
                     delay(20L)
                     continue
                 }
+                consecutiveReadFailures = 0
                 val samples = FloatArray(read) { index -> shortBuffer[index] / 32768.0f }
                 val detected = detector.accept(samples)
                 if (detected != null) {
                     pendingDetection = handleDetection(detected, detector)
                 }
             }
+        } catch (error: SecurityException) {
+            running.set(false)
+            emit(WakeWordEvent.Error(
+                "本地唤醒词已停止：麦克风权限在运行中被撤销",
+                "permission_revoked",
+            ))
+        } catch (error: WakeWordAudioReadException) {
+            running.set(false)
+            emit(WakeWordEvent.Error(
+                "唤醒词麦克风读取连续失败，准备自动恢复：${error.message}",
+                "audio_read_failed",
+            ))
         } catch (error: UnsatisfiedLinkError) {
             running.set(false)
             emit(WakeWordEvent.Error(
@@ -208,5 +241,7 @@ class SherpaWakeWordEngine(
 
     private companion object {
         const val MICROPHONE_ACQUIRE_TIMEOUT_MS = 2_500L
+        const val MAX_CONSECUTIVE_READ_FAILURES = 12
+        const val PERMISSION_RECHECK_FRAMES = 10
     }
 }

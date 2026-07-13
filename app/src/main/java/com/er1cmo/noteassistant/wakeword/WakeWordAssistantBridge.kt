@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.media.AudioManager
 import android.media.ToneGenerator
+import android.os.SystemClock
 import androidx.core.content.ContextCompat
 import com.er1cmo.noteassistant.assistant.runtime.controller.AssistantController
 import com.er1cmo.noteassistant.assistant.runtime.state.AssistantActivationStatus
@@ -25,6 +26,8 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+private const val DETECTION_DEBOUNCE_MS = 2_000L
+
 @Singleton
 class WakeWordAssistantBridge @Inject constructor(
     @ApplicationContext private val context: Context,
@@ -36,6 +39,8 @@ class WakeWordAssistantBridge @Inject constructor(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val started = AtomicBoolean(false)
     private val handoffRunning = AtomicBoolean(false)
+    @Volatile private var lastDetectionKeyword: String? = null
+    @Volatile private var lastDetectionAtElapsedMs: Long = 0L
 
     fun start() {
         if (!started.compareAndSet(false, true)) return
@@ -60,6 +65,14 @@ class WakeWordAssistantBridge @Inject constructor(
     }
 
     private suspend fun handleDetection(event: WakeWordEvent.Detected) {
+        val nowElapsed = SystemClock.elapsedRealtime()
+        if (event.rawKeyword == lastDetectionKeyword &&
+            nowElapsed - lastDetectionAtElapsedMs < DETECTION_DEBOUNCE_MS
+        ) {
+            return
+        }
+        lastDetectionKeyword = event.rawKeyword
+        lastDetectionAtElapsedMs = nowElapsed
         if (!handoffRunning.compareAndSet(false, true)) return
         try {
             val current = assistantController.state.value

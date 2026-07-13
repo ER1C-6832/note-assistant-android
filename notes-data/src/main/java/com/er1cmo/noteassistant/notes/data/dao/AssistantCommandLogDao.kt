@@ -21,4 +21,14 @@ interface AssistantCommandLogDao {
 
     @Query("SELECT * FROM assistant_command_log ORDER BY created_at DESC, id DESC LIMIT :limit")
     fun observeRecentCommandLogs(limit: Int): Flow<List<AssistantCommandLogEntity>>
+
+    @Query("""
+        DELETE FROM assistant_command_log
+        WHERE id NOT IN (
+            SELECT id FROM assistant_command_log
+            ORDER BY created_at DESC, id DESC
+            LIMIT :keepCount
+        )
+    """)
+    fun pruneKeepingNewest(keepCount: Int): Int
 }

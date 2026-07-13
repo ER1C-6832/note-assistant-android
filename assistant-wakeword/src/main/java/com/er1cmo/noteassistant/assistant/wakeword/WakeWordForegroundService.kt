@@ -20,8 +20,10 @@ import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 
@@ -35,6 +37,8 @@ class WakeWordForegroundService : Service() {
     private var engine: SherpaWakeWordEngine? = null
     private var currentConfig = WakeWordConfig()
     private var currentMode = ServiceMode.Stopped
+    private var recoveryJob: Job? = null
+    private var recoveryAttempts: Int = 0
 
     override fun onCreate() {
         super.onCreate()
@@ -48,6 +52,9 @@ class WakeWordForegroundService : Service() {
         val reason = intent?.getStringExtra(EXTRA_REASON).orEmpty()
         return when (action) {
             ACTION_STOP -> {
+                recoveryJob?.cancel()
+                recoveryJob = null
+                recoveryAttempts = 0
                 val stopReason = reason.ifBlank { "本地唤醒词服务已关闭" }
                 serviceScope.launch {
                     stopEngineAndAwait()
@@ -61,6 +68,8 @@ class WakeWordForegroundService : Service() {
             }
 
             ACTION_PAUSE -> {
+                recoveryJob?.cancel()
+                recoveryJob = null
                 val pauseReason = reason.ifBlank { "本地唤醒词监听已暂停" }
                 startAsForeground(buildNotification("唤醒词已暂停", currentConfig, true))
                 serviceScope.launch {
@@ -83,6 +92,8 @@ class WakeWordForegroundService : Service() {
             ACTION_RESUME,
             ACTION_UPDATE,
             ACTION_RESTORE -> {
+                recoveryJob?.cancel()
+                recoveryJob = null
                 startAsForeground(buildNotification("正在准备本地唤醒词", currentConfig, true))
                 serviceScope.launch { loadPersistedConfigAndStart(action) }
                 START_STICKY
@@ -96,6 +107,8 @@ class WakeWordForegroundService : Service() {
         // Do not join the engine from the main thread here. The engine's finally block
         // publishes its final status on Dispatchers.Main; joining it inside onDestroy
         // would deadlock that cleanup path.
+        recoveryJob?.cancel()
+        recoveryJob = null
         engine?.release()
         engine = null
         runBlocking {
@@ -167,11 +180,16 @@ class WakeWordForegroundService : Service() {
             is WakeWordEvent.Status -> {
                 val title = when (event.state) {
                     "initializing" -> "正在初始化唤醒词"
-                    "audio_open", "listening" -> "正在监听唤醒词"
+                    "audio_open", "listening" -> {
+                        recoveryAttempts = 0
+                        recoveryJob = null
+                        "正在监听唤醒词"
+                    }
                     "cooldown" -> "唤醒词冷却中"
                     "audio_released" -> when (currentMode) {
                         ServiceMode.Detected -> "已唤醒，等待恢复监听"
                         ServiceMode.Paused -> "唤醒词已暂停"
+                        ServiceMode.Recovering -> "唤醒词恢复中"
                         else -> "唤醒词麦克风已释放"
                     }
                     else -> "本地唤醒词服务"
@@ -181,7 +199,43 @@ class WakeWordForegroundService : Service() {
             is WakeWordEvent.Error -> {
                 currentMode = ServiceMode.Error
                 updateNotification("唤醒词服务异常", currentConfig, true)
+                if (event.state in RECOVERABLE_ERROR_STATES) {
+                    scheduleEngineRecovery(event)
+                }
             }
+        }
+    }
+
+    private fun scheduleEngineRecovery(event: WakeWordEvent.Error) {
+        if (currentMode == ServiceMode.Paused || currentMode == ServiceMode.Stopped) return
+        recoveryJob?.cancel()
+        recoveryAttempts += 1
+        val delayMs = (RECOVERY_BASE_DELAY_MS * (1L shl (recoveryAttempts - 1).coerceAtMost(4)))
+            .coerceAtMost(RECOVERY_MAX_DELAY_MS)
+        currentMode = ServiceMode.Recovering
+        updateNotification(
+            "唤醒词恢复中（第 $recoveryAttempts 次）",
+            currentConfig,
+            true,
+        )
+        recoveryJob = serviceScope.launch {
+            delay(delayMs)
+            val settings = settingsRepository.current()
+            if (!settings.enabled || currentMode == ServiceMode.Paused || currentMode == ServiceMode.Stopped) {
+                return@launch
+            }
+            if (!hasRecordAudioPermission()) {
+                publishError("本地唤醒词无法恢复：麦克风权限未授予", "permission_missing")
+                return@launch
+            }
+            coordinator.onEvent(
+                WakeWordEvent.Status(
+                    message = "正在从 ${event.state} 自动恢复唤醒词监听",
+                    state = "recovering",
+                    keyword = currentConfig.phrase.displayText,
+                ),
+            )
+            loadPersistedConfigAndStart(ACTION_RESTORE)
         }
     }
 
@@ -259,7 +313,7 @@ class WakeWordForegroundService : Service() {
         getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
     }
 
-    private enum class ServiceMode { Listening, Paused, Detected, Error, Stopped }
+    private enum class ServiceMode { Listening, Paused, Detected, Recovering, Error, Stopped }
 
     companion object {
         const val ACTION_START = "com.er1cmo.noteassistant.wakeword.START"
@@ -273,6 +327,13 @@ class WakeWordForegroundService : Service() {
 
         private const val CHANNEL_ID = "note_assistant_wakeword_v1"
         private const val NOTIFICATION_ID = 50101
+        private const val RECOVERY_BASE_DELAY_MS = 1_000L
+        private const val RECOVERY_MAX_DELAY_MS = 30_000L
+        private val RECOVERABLE_ERROR_STATES = setOf(
+            "audio_read_failed",
+            "microphone_busy",
+            "engine_error",
+        )
 
         fun startIntent(context: Context): Intent = baseIntent(context, ACTION_START)
         fun updateIntent(context: Context): Intent = baseIntent(context, ACTION_UPDATE)

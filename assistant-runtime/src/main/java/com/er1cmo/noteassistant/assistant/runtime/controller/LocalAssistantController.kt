@@ -1346,6 +1346,83 @@ class LocalAssistantController @Inject constructor(
     private fun isStreamingGenerationActive(generation: Long): Boolean =
         mutableState.value.streamingSessionActive && streamingGeneration == generation
 
+    override suspend fun handleSystemAudioInterruption(
+        reason: String,
+        resumeWakeWord: Boolean,
+    ) {
+        pttGeneration += 1L
+        responsePlaybackIdleJob?.cancel()
+        streamingNextTurnJob?.cancel()
+        streamingResponseWatchdogJob?.cancel()
+        pttWakeWordResumeJob?.cancel()
+
+        val current = mutableState.value
+        val hadVoiceActivity = current.streamingSessionActive ||
+            current.activeEntrySource != null ||
+            current.audio != AssistantAudioStatus.Idle ||
+            realAudioEngine.isRecording() ||
+            realAudioEngine.isPlaybackActive()
+
+        if (hadVoiceActivity && realWebSocketClient.isConnected()) {
+            realWebSocketClient.sendAbort(
+                reason = "system_audio:${reason.take(48)}",
+                onEvent = ::handleRealWebSocketEvent,
+            )
+        }
+
+        if (current.streamingSessionActive) {
+            stopStreamingConversationInternal(
+                reason = "system_audio:$reason",
+                resumeWakeWord = false,
+                finalizeTransport = false,
+            )
+        } else {
+            if (realAudioEngine.isRecording()) {
+                realAudioEngine.stopRecordingAndAwait(maxStopLatencyMs = 1_500L)
+            }
+            releaseAssistantMicrophone("system_audio:$reason", resumeWakeWord = false)
+            assistantTurnContextStore.clear()
+        }
+
+        realAudioEngine.stopPlaybackAndRelease()
+        pttResponseExpected = false
+        mutableState.value = mutableState.value.copy(
+            phase = if (mutableState.value.isConnected) AssistantPhase.Connected else AssistantPhase.Idle,
+            audio = AssistantAudioStatus.Idle,
+            activeEntrySource = null,
+            microphoneOwner = MicrophoneOwner.None,
+            bargeInMonitorActive = false,
+            statusText = "系统音频中断，语音会话已安全释放：$reason",
+            lastAudioSummary = "Phase5-04 v3 system audio interruption: $reason",
+            lastEventAt = nowMillis(),
+        )
+        if (resumeWakeWord) {
+            wakeWordAudioGate.resumeAfterAssistant("系统音频中断已处理：$reason")
+        }
+    }
+
+    override suspend fun handleSystemAudioRecovered(reason: String) {
+        val current = mutableState.value
+        if (current.streamingSessionActive ||
+            current.microphoneOwner != MicrophoneOwner.None ||
+            realAudioEngine.isRecording()
+        ) {
+            return
+        }
+        wakeWordAudioGate.resumeAfterAssistant("系统音频已恢复：$reason")
+        mutableState.value = current.copy(
+            phase = if (current.isConnected) AssistantPhase.Connected else AssistantPhase.Idle,
+            audio = AssistantAudioStatus.Idle,
+            statusText = if (current.isConnected) {
+                "系统音频已恢复，助手在线待命"
+            } else {
+                "系统音频已恢复，助手待命"
+            },
+            errorMessage = null,
+            lastEventAt = nowMillis(),
+        )
+    }
+
     override suspend fun simulateIncomingToolCall(toolName: String, argumentsJson: String) {
         if (!fakeWebSocketClient.isConnected()) connectFake()
         val turn = fakeWebSocketClient.simulateIncomingToolCall(toolName, argumentsJson)

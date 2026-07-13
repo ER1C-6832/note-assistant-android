@@ -38,7 +38,9 @@ class CommandTraceRepositoryImpl @Inject constructor(
     }
 
     override suspend fun insertCommandLog(log: AssistantCommandLog): Long = withContext(dispatchers.io) {
-        commandLogDao.insertCommandLog(log.toEntity())
+        commandLogDao.insertCommandLog(log.toEntity()).also {
+            commandLogDao.pruneKeepingNewest(MAX_COMMAND_LOGS)
+        }
     }
 
     override suspend fun updateCommandLog(log: AssistantCommandLog) = withContext(dispatchers.io) {
@@ -80,7 +82,10 @@ class CommandTraceRepositoryImpl @Inject constructor(
     }
 
     private inner class TransactionImpl : CommandTraceTransaction {
-        override suspend fun insertCommandLog(log: AssistantCommandLog): Long = commandLogDao.insertCommandLog(log.toEntity())
+        override suspend fun insertCommandLog(log: AssistantCommandLog): Long =
+            commandLogDao.insertCommandLog(log.toEntity()).also {
+                commandLogDao.pruneKeepingNewest(MAX_COMMAND_LOGS)
+            }
 
         override suspend fun updateCommandLog(log: AssistantCommandLog) = commandLogDao.updateCommandLog(log.toEntity())
 
@@ -91,5 +96,9 @@ class CommandTraceRepositoryImpl @Inject constructor(
 
         override suspend fun updatePendingConfirmation(pendingConfirmation: PendingConfirmation) =
             pendingConfirmationDao.updatePendingConfirmation(pendingConfirmation.toEntity())
+    }
+
+    private companion object {
+        const val MAX_COMMAND_LOGS = 2_000
     }
 }

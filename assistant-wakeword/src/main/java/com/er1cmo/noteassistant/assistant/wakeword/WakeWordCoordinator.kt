@@ -22,6 +22,7 @@ enum class WakeWordServiceState {
     Listening,
     Paused,
     Detected,
+    Recovering,
     Error,
     Stopped,
 }
@@ -142,6 +143,7 @@ class WakeWordCoordinator @Inject constructor(
                     "initializing" -> WakeWordServiceState.Initializing
                     "listening", "audio_open" -> WakeWordServiceState.Listening
                     "cooldown" -> WakeWordServiceState.Listening
+                    "recovering" -> WakeWordServiceState.Recovering
                     "audio_released" -> mutableState.value.serviceState
                     "stopped" -> WakeWordServiceState.Stopped
                     else -> mutableState.value.serviceState
