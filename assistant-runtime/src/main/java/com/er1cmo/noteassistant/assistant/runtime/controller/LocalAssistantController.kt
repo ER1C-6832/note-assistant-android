@@ -76,6 +76,8 @@ class LocalAssistantController @Inject constructor(
     private var streamingResponseWatchdogJob: Job? = null
     private var pttWakeWordResumeJob: Job? = null
     private var responsePlaybackIdleJob: Job? = null
+    private var automaticReconnectJob: Job? = null
+    @Volatile private var manualDisconnectRequested: Boolean = false
     private var pttResponseExpected: Boolean = false
     @Volatile private var bargeInTriggered: Boolean = false
     @Volatile private var bargeInStarting: Boolean = false
@@ -109,6 +111,22 @@ class LocalAssistantController @Inject constructor(
                 mutableState.value = mutableState.value.copy(microphoneOwner = ownership.owner)
             }
         }
+        scope.launch {
+            val enabled = settingsRepository.assistantEnabled.first()
+            val activated = settingsRepository.assistantActivationStatus.first()
+            if (enabled && activated) {
+                delay(450L)
+                mutableState.value = mutableState.value.copy(
+                    assistantEnabled = true,
+                    runtimeMode = AssistantRuntimeMode.Real,
+                    fakeRuntime = false,
+                    activation = AssistantActivationStatus.Activated,
+                    errorMessage = null,
+                    statusText = "正在恢复语音服务",
+                )
+                scheduleAutomaticReconnect("app_start")
+            }
+        }
     }
 
     override suspend fun enableAssistant() {
@@ -117,6 +135,9 @@ class LocalAssistantController @Inject constructor(
     }
 
     override suspend fun disableAssistant() {
+        manualDisconnectRequested = true
+        automaticReconnectJob?.cancel()
+        automaticReconnectJob = null
         responsePlaybackIdleJob?.cancel()
         pttResponseExpected = false
         stopStreamingConversationInternal("assistant_disabled", resumeWakeWord = false)
@@ -165,6 +186,9 @@ class LocalAssistantController @Inject constructor(
     }
 
     override suspend fun connect() {
+        manualDisconnectRequested = false
+        automaticReconnectJob?.cancel()
+        automaticReconnectJob = null
         if (mutableState.value.runtimeMode == AssistantRuntimeMode.Real) {
             connectReal()
         } else {
@@ -227,13 +251,16 @@ class LocalAssistantController @Inject constructor(
         val success = runCatching {
             realWebSocketClient.connect(config, ::handleRealWebSocketEvent)
         }.getOrElse { error ->
-            mutableState.value = stateMachine.error(
+            mutableState.value = stateMachine.disconnected(
                 current = mutableState.value,
-                message = error.message ?: error::class.java.simpleName,
+                reason = error.message ?: error::class.java.simpleName,
                 nowMillis = nowMillis(),
             ).copy(
                 runtimeMode = AssistantRuntimeMode.Real,
                 fakeRuntime = false,
+                errorMessage = null,
+                statusText = "暂时无法连接语音服务",
+                lastCloseReason = error.message ?: error::class.java.simpleName,
                 lastReconnectDecision = "real_connect_exception",
             )
             false
@@ -247,18 +274,29 @@ class LocalAssistantController @Inject constructor(
                 clientId = identity.clientId,
                 websocketUrl = config.websocketUrl,
                 gateBRealHandshakeVerified = true,
-                statusText = "真实 WebSocket hello/session 握手完成",
+                reconnectAttempt = 0,
+                errorMessage = null,
+                statusText = "语音服务已连接",
             )
+            automaticReconnectJob?.cancel()
+            automaticReconnectJob = null
         } else if (!mutableState.value.isConnected) {
-            mutableState.value = stateMachine.error(
+            mutableState.value = stateMachine.disconnected(
                 current = mutableState.value.copy(runtimeMode = AssistantRuntimeMode.Real, fakeRuntime = false),
-                message = "真实 WebSocket handshake 未完成；请检查真实 OTA 下发的 URL/token 与服务端状态。",
+                reason = "real_handshake_failed",
                 nowMillis = nowMillis(),
-            ).copy(lastReconnectDecision = "real_handshake_failed")
+            ).copy(
+                errorMessage = null,
+                statusText = "暂时无法连接语音服务，点击小智可重试",
+                lastReconnectDecision = "real_handshake_failed",
+            )
         }
     }
 
     override suspend fun reconnect() {
+        manualDisconnectRequested = false
+        automaticReconnectJob?.cancel()
+        automaticReconnectJob = null
         responsePlaybackIdleJob?.cancel()
         pttResponseExpected = false
         stopStreamingConversationInternal("manual_reconnect", resumeWakeWord = false)
@@ -280,6 +318,9 @@ class LocalAssistantController @Inject constructor(
     }
 
     override suspend fun disconnect(reason: String) {
+        manualDisconnectRequested = true
+        automaticReconnectJob?.cancel()
+        automaticReconnectJob = null
         responsePlaybackIdleJob?.cancel()
         pttResponseExpected = false
         stopStreamingConversationInternal(reason, resumeWakeWord = true)
@@ -1646,24 +1687,29 @@ class LocalAssistantController @Inject constructor(
                 scope.launch { handleTransportClosed(event) }
             }
             is XiaozhiWebSocketEvent.Error -> {
-                mutableState.value = stateMachine.error(
-                    current = mutableState.value.copy(connection = AssistantConnectionStatus.Disconnected, sessionId = null),
-                    message = event.message,
-                    nowMillis = nowMillis(),
-                ).copy(
-                    runtimeMode = AssistantRuntimeMode.Real,
-                    fakeRuntime = false,
-                    lastProtocolEvent = event.javaClass.simpleName,
-                    lastReconnectDecision = "real_websocket_error",
-                )
-                if (mutableState.value.streamingSessionActive) {
-                    scope.launch {
+                scope.launch {
+                    if (mutableState.value.streamingSessionActive) {
                         stopStreamingConversationInternal(
                             reason = "websocket_error",
                             resumeWakeWord = true,
                             finalizeTransport = false,
                         )
                     }
+                    releaseAssistantMicrophone("websocket_error", resumeWakeWord = false)
+                    realAudioEngine.cancel()
+                    mutableState.value = stateMachine.disconnected(
+                        current = mutableState.value.copy(connection = AssistantConnectionStatus.Disconnected, sessionId = null),
+                        reason = event.message,
+                        nowMillis = nowMillis(),
+                    ).copy(
+                        runtimeMode = AssistantRuntimeMode.Real,
+                        fakeRuntime = false,
+                        errorMessage = null,
+                        statusText = "连接中断，正在自动恢复",
+                        lastProtocolEvent = event.javaClass.simpleName,
+                        lastReconnectDecision = "real_websocket_error",
+                    )
+                    scheduleAutomaticReconnect("websocket_error")
                 }
             }
         }
@@ -1687,22 +1733,30 @@ class LocalAssistantController @Inject constructor(
                 )
             }
             is ProtocolEvent.AssistantText -> {
-                val streamingActive = base.streamingSessionActive
-                mutableState.value = stateMachine.assistantText(base, event.text, nowMillis()).copy(
-                    runtimeMode = AssistantRuntimeMode.Real,
-                    fakeRuntime = false,
-                    gateBRealTextVerified = true,
-                    streamingConversationState = if (streamingActive) {
-                        StreamingConversationState.Thinking
-                    } else {
-                        base.streamingConversationState
-                    },
-                    statusText = "收到真实助手文本回复",
-                )
-                if (streamingActive) {
-                    scheduleNextStreamingTurn(streamingGeneration, STREAMING_TEXT_ONLY_RESUME_MS)
+                val messageType = runCatching { JSONObject(rawJson).optString("type") }.getOrDefault("")
+                if (messageType == "stt") {
+                    mutableState.value = base.copy(
+                        lastUserText = event.text,
+                        statusText = "已识别语音",
+                    )
                 } else {
-                    schedulePushToTalkWakeWordResume(RESPONSE_TEXT_RESUME_MS)
+                    val streamingActive = base.streamingSessionActive
+                    mutableState.value = stateMachine.assistantText(base, event.text, nowMillis()).copy(
+                        runtimeMode = AssistantRuntimeMode.Real,
+                        fakeRuntime = false,
+                        gateBRealTextVerified = true,
+                        streamingConversationState = if (streamingActive) {
+                            StreamingConversationState.Thinking
+                        } else {
+                            base.streamingConversationState
+                        },
+                        statusText = "收到助手回复",
+                    )
+                    if (streamingActive) {
+                        scheduleNextStreamingTurn(streamingGeneration, STREAMING_TEXT_ONLY_RESUME_MS)
+                    } else {
+                        schedulePushToTalkWakeWordResume(RESPONSE_TEXT_RESUME_MS)
+                    }
                 }
             }
             is ProtocolEvent.TtsState -> {
@@ -1839,7 +1893,6 @@ class LocalAssistantController @Inject constructor(
                 fakeRuntime = false,
                 audio = if (playback.success) AssistantAudioStatus.Playing else mutableState.value.audio,
                 lastAudioSummary = playback.summary,
-                lastAssistantText = playback.summary,
                 gateBRealAudioPlaybackVerified = mutableState.value.gateBRealAudioPlaybackVerified || playback.success,
                 statusText = if (playback.success) "真实服务端 audio/TTS 已解码并写入 AudioTrack" else "真实服务端音频帧已收到，等待可播放 PCM",
                 lastEventAt = nowMillis(),
@@ -1874,27 +1927,69 @@ class LocalAssistantController @Inject constructor(
             assistantEnabled = current.assistantEnabled,
             currentAttempt = current.reconnectAttempt,
         )
-        if (!decision.shouldReconnect) {
-            mutableState.value = stateMachine.disconnected(current, closed.reason, nowMillis()).copy(
-                runtimeMode = current.runtimeMode,
-                fakeRuntime = current.runtimeMode == AssistantRuntimeMode.Fake,
-                lastCloseCode = closed.code,
-                lastCloseReason = closed.reason,
-                lastReconnectDecision = decision.decisionLabel,
-                statusText = decision.userMessage,
-            )
-            return
-        }
-        mutableState.value = stateMachine.reconnecting(current, closed.reason, decision.nextAttempt, nowMillis()).copy(
+        mutableState.value = stateMachine.disconnected(current, closed.reason, nowMillis()).copy(
             runtimeMode = current.runtimeMode,
             fakeRuntime = current.runtimeMode == AssistantRuntimeMode.Fake,
+            errorMessage = null,
             lastCloseCode = closed.code,
             lastCloseReason = closed.reason,
             lastReconnectDecision = decision.decisionLabel,
-            statusText = decision.userMessage,
+            statusText = if (decision.shouldReconnect) "连接中断，正在自动恢复" else "语音服务已断开",
         )
-        delay(120)
-        connect()
+        if (decision.shouldReconnect) {
+            scheduleAutomaticReconnect("transport_closed")
+        }
+    }
+
+    private fun scheduleAutomaticReconnect(reason: String) {
+        if (manualDisconnectRequested || !mutableState.value.assistantEnabled) return
+        if (mutableState.value.runtimeMode != AssistantRuntimeMode.Real) return
+        if (automaticReconnectJob?.isActive == true) return
+
+        val nextAttempt = mutableState.value.reconnectAttempt + 1
+        if (nextAttempt > MAX_AUTOMATIC_RECONNECT_ATTEMPTS) {
+            mutableState.value = stateMachine.disconnected(
+                current = mutableState.value,
+                reason = reason,
+                nowMillis = nowMillis(),
+            ).copy(
+                errorMessage = null,
+                statusText = "暂时无法连接，点击小智重试",
+                lastReconnectDecision = "automatic_reconnect_exhausted",
+            )
+            return
+        }
+
+        val delayMs = automaticReconnectDelayMs(nextAttempt)
+        mutableState.value = stateMachine.reconnecting(
+            current = mutableState.value,
+            reason = reason,
+            attempt = nextAttempt,
+            nowMillis = nowMillis(),
+        ).copy(
+            runtimeMode = AssistantRuntimeMode.Real,
+            fakeRuntime = false,
+            errorMessage = null,
+            statusText = "正在重新连接",
+            lastReconnectDecision = "automatic_reconnect_$nextAttempt",
+        )
+        automaticReconnectJob = scope.launch {
+            delay(delayMs)
+            automaticReconnectJob = null
+            if (manualDisconnectRequested || !mutableState.value.assistantEnabled) return@launch
+            connectReal()
+            if (!mutableState.value.isConnected) {
+                scheduleAutomaticReconnect(reason)
+            }
+        }
+    }
+
+    private fun automaticReconnectDelayMs(attempt: Int): Long = when (attempt) {
+        1 -> 1_000L
+        2 -> 2_000L
+        3 -> 4_000L
+        4 -> 8_000L
+        else -> 15_000L
     }
 
     private fun ProtocolEvent.McpResponse.toToolTrace(): ToolTrace {
@@ -1937,5 +2032,6 @@ class LocalAssistantController @Inject constructor(
         const val RESPONSE_TTS_RESUME_MS = 500L
         const val RESPONSE_FALLBACK_RESUME_MS = 12_000L
         const val RESPONSE_PLAYBACK_IDLE_MS = 1_500L
+        const val MAX_AUTOMATIC_RECONNECT_ATTEMPTS = 5
     }
 }

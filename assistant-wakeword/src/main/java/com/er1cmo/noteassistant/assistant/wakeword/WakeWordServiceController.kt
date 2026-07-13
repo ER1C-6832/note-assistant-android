@@ -17,6 +17,27 @@ class WakeWordServiceController @Inject constructor(
     private val coordinator: WakeWordCoordinator,
     private val customPhraseTester: WakeWordCustomPhraseTester,
 ) : WakeWordAudioGate {
+    suspend fun restoreIfEnabled() {
+        val settings = settingsRepository.current()
+        if (!settings.enabled) return
+        val current = coordinator.state.value.serviceState
+        if (current in setOf(
+                WakeWordServiceState.Starting,
+                WakeWordServiceState.Initializing,
+                WakeWordServiceState.Listening,
+                WakeWordServiceState.Recovering,
+            )
+        ) {
+            return
+        }
+        val config = WakeWordConfig.fromSettings(settings)
+        coordinator.onServiceStarting(config.phrase.displayText)
+        ContextCompat.startForegroundService(
+            context,
+            WakeWordForegroundService.startIntent(context),
+        )
+    }
+
     suspend fun setEnabled(enabled: Boolean) {
         settingsRepository.setEnabled(enabled)
         if (enabled) {

@@ -22,6 +22,7 @@ class SettingsRepository @Inject constructor(
         val websocketUrl = stringPreferencesKey("websocket_url")
         val homeBackgroundColor = stringPreferencesKey("home_background_color")
         val tagDrawerBackgroundColor = stringPreferencesKey("tag_drawer_background_color")
+        val assistantTextPanelEnabled = booleanPreferencesKey("assistant_text_panel_enabled")
 
         val assistantOtaUrl = stringPreferencesKey("assistant_ota_url")
         val assistantAuthorizationUrl = stringPreferencesKey("assistant_authorization_url")
@@ -100,6 +101,10 @@ class SettingsRepository @Inject constructor(
 
     val tagDrawerBackgroundColor: Flow<String> = context.appSettingsDataStore.data.map { prefs ->
         prefs[Keys.tagDrawerBackgroundColor] ?: DEFAULT_TAG_DRAWER_BACKGROUND
+    }
+
+    val assistantTextPanelEnabled: Flow<Boolean> = context.appSettingsDataStore.data.map { prefs ->
+        prefs[Keys.assistantTextPanelEnabled] ?: false
     }
 
     suspend fun setAssistantEnabled(enabled: Boolean) {
@@ -213,6 +218,10 @@ class SettingsRepository @Inject constructor(
 
     suspend fun setTagDrawerBackgroundColor(hex: String) {
         context.appSettingsDataStore.edit { prefs -> prefs[Keys.tagDrawerBackgroundColor] = hex }
+    }
+
+    suspend fun setAssistantTextPanelEnabled(enabled: Boolean) {
+        context.appSettingsDataStore.edit { prefs -> prefs[Keys.assistantTextPanelEnabled] = enabled }
     }
 
     companion object {

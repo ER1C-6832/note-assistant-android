@@ -600,8 +600,18 @@ private fun FilterBar(
     onFilterSelected: (String) -> Unit,
 ) {
     Row(modifier = Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-        Surface(onClick = onTagPanelClick, shape = RoundedCornerShape(16.dp), color = Color(0xFFFFE3A1), tonalElevation = 1.dp) {
-            Text(text = "标签", modifier = Modifier.padding(horizontal = 16.dp, vertical = 9.dp), style = MaterialTheme.typography.labelLarge, color = Color(0xFF604410), maxLines = 1)
+        Surface(shape = CircleShape, color = Color(0xFFFFE3A1), tonalElevation = 1.dp) {
+            IconButton(
+                onClick = onTagPanelClick,
+                modifier = Modifier.size(42.dp),
+            ) {
+                Icon(
+                    painter = painterResource(R.drawable.ic_menu_hamburger),
+                    contentDescription = "打开标签与分类",
+                    modifier = Modifier.size(22.dp),
+                    tint = Color.Unspecified,
+                )
+            }
         }
         MAIN_FILTERS.forEach { filter ->
             FilterPill(text = filter, selected = selectedFilter == filter, onClick = { onFilterSelected(filter) })
