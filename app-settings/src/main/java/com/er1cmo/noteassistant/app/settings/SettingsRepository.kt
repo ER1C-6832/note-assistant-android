@@ -22,7 +22,9 @@ class SettingsRepository @Inject constructor(
         val websocketUrl = stringPreferencesKey("websocket_url")
         val homeBackgroundColor = stringPreferencesKey("home_background_color")
         val tagDrawerBackgroundColor = stringPreferencesKey("tag_drawer_background_color")
-        val assistantTextPanelEnabled = booleanPreferencesKey("assistant_text_panel_enabled")
+        val assistantTextPanelEnabled = booleanPreferencesKey("assistant_text_panel_enabled") // legacy
+        val assistantConversationTextEnabled = booleanPreferencesKey("assistant_conversation_text_enabled")
+        val assistantTextInputEnabled = booleanPreferencesKey("assistant_text_input_enabled")
 
         val assistantOtaUrl = stringPreferencesKey("assistant_ota_url")
         val assistantAuthorizationUrl = stringPreferencesKey("assistant_authorization_url")
@@ -105,6 +107,16 @@ class SettingsRepository @Inject constructor(
 
     val assistantTextPanelEnabled: Flow<Boolean> = context.appSettingsDataStore.data.map { prefs ->
         prefs[Keys.assistantTextPanelEnabled] ?: false
+    }
+
+    // Phase5 product transcript/input split: transcript is visible by default;
+    // text input remains an explicit opt-in surface.
+    val assistantConversationTextEnabled: Flow<Boolean> = context.appSettingsDataStore.data.map { prefs ->
+        prefs[Keys.assistantConversationTextEnabled] ?: true
+    }
+
+    val assistantTextInputEnabled: Flow<Boolean> = context.appSettingsDataStore.data.map { prefs ->
+        prefs[Keys.assistantTextInputEnabled] ?: false
     }
 
     suspend fun setAssistantEnabled(enabled: Boolean) {
@@ -222,6 +234,14 @@ class SettingsRepository @Inject constructor(
 
     suspend fun setAssistantTextPanelEnabled(enabled: Boolean) {
         context.appSettingsDataStore.edit { prefs -> prefs[Keys.assistantTextPanelEnabled] = enabled }
+    }
+
+    suspend fun setAssistantConversationTextEnabled(enabled: Boolean) {
+        context.appSettingsDataStore.edit { prefs -> prefs[Keys.assistantConversationTextEnabled] = enabled }
+    }
+
+    suspend fun setAssistantTextInputEnabled(enabled: Boolean) {
+        context.appSettingsDataStore.edit { prefs -> prefs[Keys.assistantTextInputEnabled] = enabled }
     }
 
     companion object {

@@ -87,7 +87,7 @@ class ToolCallEventStore @Inject constructor() {
             status = ToolCallUiStatus.Running,
             toolName = toolName,
             message = runningMessage(toolName),
-            detail = argumentsJson?.takeIf { it.isNotBlank() }?.let { compactJsonPreview(it) },
+            detail = null,
             startedAtMillis = nowMillis,
             updatedAtMillis = nowMillis,
         )
@@ -255,22 +255,14 @@ private fun confirmationMessage(toolName: String?, result: McpToolResult): Strin
 
 private fun detailMessage(result: McpToolResult): String? {
     val base = when (result.statusEnum) {
-        McpToolStatus.Success,
-        McpToolStatus.PartialSuccess -> result.message
         McpToolStatus.RequiresConfirmation -> result.confirmationSummary ?: result.message
         McpToolStatus.Failed,
         McpToolStatus.Blocked,
         McpToolStatus.NotImplemented -> result.message
+        McpToolStatus.Success,
+        McpToolStatus.PartialSuccess -> null
     }
-    val extras = buildList {
-        result.confirmationId?.let { add("confirmation_id=$it") }
-        result.commandLogId?.let { add("log_id=$it") }
-        result.errorCode?.let { add("error=$it") }
-    }
-    return listOf(sanitizeMessage(base), extras.joinToString("  "))
-        .filter { it.isNotBlank() }
-        .joinToString("\n")
-        .ifBlank { null }
+    return base?.let(::sanitizeMessage)?.ifBlank { null }
 }
 
 private fun ToolCallUiState.toConfirmationRequest(): ToolCallConfirmationRequest? {
@@ -324,13 +316,21 @@ private fun confirmationDialogMessage(
 }
 
 private fun sanitizeMessage(message: String): String {
-    return message
+    val firstLine = message
         .lineSequence()
         .firstOrNull { it.isNotBlank() }
         ?.replace("file://", "")
         ?.replace("Exception", "错误")
-        ?.take(120)
+        ?.trim()
         .orEmpty()
+    if (firstLine.isBlank()) return ""
+    val looksTechnical = firstLine.contains("{") ||
+        firstLine.contains("}") ||
+        firstLine.contains("=") ||
+        firstLine.contains("_id", ignoreCase = true) ||
+        firstLine.contains("json", ignoreCase = true) ||
+        firstLine.contains("exception", ignoreCase = true)
+    return if (looksTechnical && firstLine.none { it in '\u4E00'..'\u9FFF' }) "" else firstLine.take(96)
 }
 
 private fun compactJsonPreview(json: String): String {

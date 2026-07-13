@@ -21,7 +21,11 @@ class XiaozhiMessageRouter @Inject constructor(
         val sessionId = json.optString("session_id").ifBlank { null }
         return when (type) {
             "hello" -> ProtocolEvent.Connected(sessionId.orEmpty())
-            "tts" -> ProtocolEvent.TtsState(state = json.optString("state", "unknown"), sessionId = sessionId)
+            "tts" -> ProtocolEvent.TtsState(
+                state = json.optString("state", "unknown"),
+                sessionId = sessionId,
+                text = json.optString("text").trim().ifBlank { null },
+            )
             "listen" -> ProtocolEvent.ListenState(state = json.optString("state", "unknown"), sessionId = sessionId)
             "mcp" -> routeMcp(json, sessionId, toolContext.copy(sessionId = sessionId ?: toolContext.sessionId))
             "stt", "llm", "text" -> ProtocolEvent.AssistantText(text = json.optString("text", raw), sessionId = sessionId)

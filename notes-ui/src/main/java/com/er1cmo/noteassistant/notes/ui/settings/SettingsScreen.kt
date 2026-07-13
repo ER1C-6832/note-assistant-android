@@ -157,9 +157,11 @@ fun SettingsRoute(
                 onBargeInEnabledChange = viewModel::setStreamingBargeInEnabled,
             )
 
-            TextConversationSettingsBox(
-                enabled = state.assistantTextPanelEnabled,
-                onEnabledChange = viewModel::setAssistantTextPanelEnabled,
+            AssistantTextSettingsBox(
+                conversationTextEnabled = state.assistantConversationTextEnabled,
+                textInputEnabled = state.assistantTextInputEnabled,
+                onConversationTextEnabledChange = viewModel::setAssistantConversationTextEnabled,
+                onTextInputEnabledChange = viewModel::setAssistantTextInputEnabled,
             )
 
             DeveloperOptionsBox(logs = state.recentLogs)
@@ -182,18 +184,21 @@ class SettingsViewModel @Inject constructor(
     private data class AppearanceState(
         val homeBackgroundColor: String,
         val tagDrawerBackgroundColor: String,
-        val assistantTextPanelEnabled: Boolean,
+        val assistantConversationTextEnabled: Boolean,
+        val assistantTextInputEnabled: Boolean,
     )
 
     private val appearanceState = combine(
         settingsRepository.homeBackgroundColor,
         settingsRepository.tagDrawerBackgroundColor,
-        settingsRepository.assistantTextPanelEnabled,
-    ) { home, drawer, textPanelEnabled ->
+        settingsRepository.assistantConversationTextEnabled,
+        settingsRepository.assistantTextInputEnabled,
+    ) { home, drawer, conversationTextEnabled, textInputEnabled ->
         AppearanceState(
             homeBackgroundColor = home,
             tagDrawerBackgroundColor = drawer,
-            assistantTextPanelEnabled = textPanelEnabled,
+            assistantConversationTextEnabled = conversationTextEnabled,
+            assistantTextInputEnabled = textInputEnabled,
         )
     }
 
@@ -205,7 +210,8 @@ class SettingsViewModel @Inject constructor(
         SettingsUiState(
             homeBackgroundColor = appearance.homeBackgroundColor,
             tagDrawerBackgroundColor = appearance.tagDrawerBackgroundColor,
-            assistantTextPanelEnabled = appearance.assistantTextPanelEnabled,
+            assistantConversationTextEnabled = appearance.assistantConversationTextEnabled,
+            assistantTextInputEnabled = appearance.assistantTextInputEnabled,
             assistantState = assistantState,
             recentLogs = logs,
         )
@@ -223,8 +229,12 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch { settingsRepository.setTagDrawerBackgroundColor(hex) }
     }
 
-    fun setAssistantTextPanelEnabled(enabled: Boolean) {
-        viewModelScope.launch { settingsRepository.setAssistantTextPanelEnabled(enabled) }
+    fun setAssistantConversationTextEnabled(enabled: Boolean) {
+        viewModelScope.launch { settingsRepository.setAssistantConversationTextEnabled(enabled) }
+    }
+
+    fun setAssistantTextInputEnabled(enabled: Boolean) {
+        viewModelScope.launch { settingsRepository.setAssistantTextInputEnabled(enabled) }
     }
 
     fun setVoiceInteractionMode(mode: VoiceInteractionMode) {
@@ -255,7 +265,8 @@ class SettingsViewModel @Inject constructor(
 data class SettingsUiState(
     val homeBackgroundColor: String = SettingsRepository.DEFAULT_HOME_BACKGROUND,
     val tagDrawerBackgroundColor: String = SettingsRepository.DEFAULT_TAG_DRAWER_BACKGROUND,
-    val assistantTextPanelEnabled: Boolean = false,
+    val assistantConversationTextEnabled: Boolean = true,
+    val assistantTextInputEnabled: Boolean = false,
     val assistantState: AssistantState = AssistantState.disabled(),
     val recentLogs: List<AssistantCommandLog> = emptyList(),
 )
@@ -290,23 +301,38 @@ private fun AppearanceSettingsBox(
 }
 
 @Composable
-private fun TextConversationSettingsBox(
-    enabled: Boolean,
-    onEnabledChange: (Boolean) -> Unit,
+private fun AssistantTextSettingsBox(
+    conversationTextEnabled: Boolean,
+    textInputEnabled: Boolean,
+    onConversationTextEnabledChange: (Boolean) -> Unit,
+    onTextInputEnabledChange: (Boolean) -> Unit,
 ) {
     SettingsCard {
+        Text(
+            text = "文字功能",
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold,
+            color = Color(0xFF202632),
+        )
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(
-                text = "显示文字对话",
-                modifier = Modifier.weight(1f),
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
-                color = Color(0xFF202632),
-            )
-            Switch(checked = enabled, onCheckedChange = onEnabledChange)
+            Column(modifier = Modifier.weight(1f)) {
+                Text("显示文字对话", style = MaterialTheme.typography.bodyLarge, color = Color(0xFF303846))
+                Text("显示语音识别和助手回复", style = MaterialTheme.typography.bodySmall, color = Color(0xFF7A8494))
+            }
+            Switch(checked = conversationTextEnabled, onCheckedChange = onConversationTextEnabledChange)
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("显示文本输入框", style = MaterialTheme.typography.bodyLarge, color = Color(0xFF303846))
+                Text("在主界面直接输入并发送文字", style = MaterialTheme.typography.bodySmall, color = Color(0xFF7A8494))
+            }
+            Switch(checked = textInputEnabled, onCheckedChange = onTextInputEnabledChange)
         }
     }
 }

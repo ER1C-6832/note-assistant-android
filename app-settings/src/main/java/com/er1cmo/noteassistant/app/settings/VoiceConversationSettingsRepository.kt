@@ -16,7 +16,7 @@ import kotlinx.coroutines.flow.map
 private val Context.voiceConversationDataStore by preferencesDataStore(name = "voice_conversation_settings")
 
 data class VoiceConversationSettingsSnapshot(
-    val defaultMode: String = MODE_STREAMING,
+    val defaultMode: String = MODE_HOLD_TO_TALK,
     val streamingIdleTimeoutMs: Long = DEFAULT_STREAMING_IDLE_TIMEOUT_MS,
     val streamingBargeInEnabled: Boolean = false,
     val mixedGestureShortcutEnabled: Boolean = false,
@@ -41,7 +41,7 @@ class VoiceConversationSettingsRepository @Inject constructor(
 
     val settings: Flow<VoiceConversationSettingsSnapshot> = context.voiceConversationDataStore.data.map { prefs ->
         VoiceConversationSettingsSnapshot(
-            defaultMode = prefs[Keys.defaultMode] ?: VoiceConversationSettingsSnapshot.MODE_STREAMING,
+            defaultMode = prefs[Keys.defaultMode] ?: VoiceConversationSettingsSnapshot.MODE_HOLD_TO_TALK,
             streamingIdleTimeoutMs = (prefs[Keys.streamingIdleTimeoutMs]
                 ?: VoiceConversationSettingsSnapshot.DEFAULT_STREAMING_IDLE_TIMEOUT_MS)
                 .coerceIn(MIN_IDLE_TIMEOUT_MS, MAX_IDLE_TIMEOUT_MS),

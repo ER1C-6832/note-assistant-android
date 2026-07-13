@@ -83,7 +83,7 @@ data class AssistantState(
     val lastToolStatus: String? = null,
     val lastCommandLogId: Long? = null,
     val lastConfirmationId: String? = null,
-    val preferredVoiceMode: VoiceInteractionMode = VoiceInteractionMode.StreamingConversation,
+    val preferredVoiceMode: VoiceInteractionMode = VoiceInteractionMode.HoldToTalk,
     val activeEntrySource: AssistantEntrySource? = null,
     val microphoneOwner: MicrophoneOwner = MicrophoneOwner.None,
     val streamingConversationState: StreamingConversationState = StreamingConversationState.Inactive,

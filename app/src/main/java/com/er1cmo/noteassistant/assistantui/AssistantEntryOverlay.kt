@@ -136,9 +136,13 @@ fun AssistantEntryOverlay(
             ActivationCodeCard(uiState = uiState)
         }
 
-        if (uiState.textPanelEnabled) {
-            ConversationTextCard(
-                uiState = uiState,
+        if (uiState.conversationTextEnabled) {
+            ConversationTranscriptCard(uiState = uiState)
+        }
+
+        if (uiState.textInputEnabled) {
+            AssistantTextInputCard(
+                inputText = uiState.inputText,
                 onInputChange = viewModel::setInputText,
                 onSendClick = viewModel::sendCurrentText,
             )
@@ -203,69 +207,91 @@ private fun ActivationCodeCard(uiState: AssistantEntryUiState) {
 }
 
 @Composable
-private fun ConversationTextCard(
-    uiState: AssistantEntryUiState,
-    onInputChange: (String) -> Unit,
-    onSendClick: () -> Unit,
-) {
+private fun ConversationTranscriptCard(uiState: AssistantEntryUiState) {
+    val userText = uiState.state.lastUserText.orEmpty().trim()
+    val assistantText = uiState.state.lastAssistantText.orEmpty().trim()
     Surface(
         modifier = Modifier.widthIn(max = 332.dp),
-        shape = RoundedCornerShape(24.dp),
-        color = Color(0xFF111827).copy(alpha = 0.90f),
-        shadowElevation = 10.dp,
-        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.12f)),
+        shape = RoundedCornerShape(22.dp),
+        color = Color(0xFFF7FAFF),
+        shadowElevation = 6.dp,
+        border = BorderStroke(1.dp, Color(0xFFD9E4F4)),
     ) {
         Column(
-            modifier = Modifier.padding(12.dp),
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            val userText = uiState.state.lastUserText.orEmpty().trim()
-            val assistantText = uiState.state.lastAssistantText.orEmpty().trim()
+            Text(
+                text = "对话文字",
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.SemiBold,
+                color = Color(0xFF334155),
+            )
             if (userText.isBlank() && assistantText.isBlank()) {
                 Text(
-                    text = "对话文字会显示在这里",
+                    text = "语音识别和助手回复会显示在这里",
                     style = MaterialTheme.typography.bodySmall,
-                    color = Color.White.copy(alpha = 0.46f),
+                    color = Color(0xFF7B8798),
                 )
-            } else {
-                if (userText.isNotBlank()) {
+            }
+            if (userText.isNotBlank()) {
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text("你", style = MaterialTheme.typography.labelSmall, color = Color(0xFF60738E))
                     Text(
                         text = userText,
                         style = MaterialTheme.typography.bodyMedium,
-                        color = Color(0xFFD8E3FF),
-                        maxLines = 3,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-                if (assistantText.isNotBlank()) {
-                    Text(
-                        text = assistantText,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = Color.White.copy(alpha = 0.88f),
+                        color = Color(0xFF243247),
                         maxLines = 4,
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
             }
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                OutlinedTextField(
-                    value = uiState.inputText,
-                    onValueChange = onInputChange,
-                    modifier = Modifier.weight(1f),
-                    singleLine = true,
-                    placeholder = { Text("输入消息") },
-                )
-                Button(
-                    onClick = onSendClick,
-                    enabled = uiState.inputText.isNotBlank(),
-                ) {
-                    Text("发送")
+            if (assistantText.isNotBlank()) {
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text("小智", style = MaterialTheme.typography.labelSmall, color = Color(0xFF6C5FB3))
+                    Text(
+                        text = assistantText,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color(0xFF2F2948),
+                        maxLines = 6,
+                        overflow = TextOverflow.Ellipsis,
+                    )
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AssistantTextInputCard(
+    inputText: String,
+    onInputChange: (String) -> Unit,
+    onSendClick: () -> Unit,
+) {
+    Surface(
+        modifier = Modifier.widthIn(max = 332.dp),
+        shape = RoundedCornerShape(22.dp),
+        color = Color(0xFFFFFDF7),
+        shadowElevation = 6.dp,
+        border = BorderStroke(1.dp, Color(0xFFE9DFC9)),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            OutlinedTextField(
+                value = inputText,
+                onValueChange = onInputChange,
+                modifier = Modifier.weight(1f),
+                singleLine = true,
+                placeholder = { Text("输入文字消息") },
+            )
+            Button(
+                onClick = onSendClick,
+                enabled = inputText.isNotBlank(),
+            ) {
+                Text("发送")
             }
         }
     }
@@ -384,50 +410,47 @@ private fun AssistantOperationBanner(
                     },
                 )
             },
-        shape = RoundedCornerShape(22.dp),
-        color = Color(0xFF111827).copy(alpha = 0.90f),
-        shadowElevation = 10.dp,
-        border = BorderStroke(1.dp, accent.copy(alpha = 0.46f)),
+        shape = RoundedCornerShape(20.dp),
+        color = Color(0xFFF8FAFC),
+        shadowElevation = 6.dp,
+        border = BorderStroke(1.dp, accent.copy(alpha = 0.34f)),
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Box(
-                modifier = Modifier
-                    .size(10.dp)
-                    .clip(CircleShape)
-                    .background(accent),
+            Box(Modifier.size(9.dp).clip(CircleShape).background(accent))
+            Text(
+                text = toolCall.productMessage(),
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Medium,
+                color = Color(0xFF344054),
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
             )
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = toolCall.message,
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.SemiBold,
-                    color = Color.White.copy(alpha = 0.90f),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                toolCall.detail?.takeIf { it.isNotBlank() }?.let { detail ->
-                    Text(
-                        text = detail,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = Color.White.copy(alpha = 0.58f),
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-            }
-            TextButton(onClick = onDismiss) { Text("关闭") }
+            TextButton(onClick = onDismiss) { Text("关闭", color = Color(0xFF667085)) }
         }
     }
+}
+
+private fun ToolCallUiState.productMessage(): String = when (status) {
+    ToolCallUiStatus.Running -> message.takeIf { it.any { ch -> ch in '\u4E00'..'\u9FFF' } } ?: "正在处理"
+    ToolCallUiStatus.Success -> message.replace("工具", "操作").ifBlank { "操作已完成" }
+    ToolCallUiStatus.RequiresConfirmation -> "需要确认操作"
+    ToolCallUiStatus.PartialSuccess -> "操作已部分完成"
+    ToolCallUiStatus.Failed -> "操作未完成，请稍后重试"
+    ToolCallUiStatus.Blocked -> "操作已被安全拦截"
+    ToolCallUiStatus.NotImplemented -> "暂不支持这个操作"
+    ToolCallUiStatus.Idle -> "等待操作"
 }
 
 data class AssistantEntryUiState(
     val state: AssistantState,
     val toolCall: ToolCallUiState,
-    val textPanelEnabled: Boolean,
+    val conversationTextEnabled: Boolean,
+    val textInputEnabled: Boolean,
     val inputText: String,
 ) {
     val showActivationCode: Boolean = state.activation == AssistantActivationStatus.Required &&
@@ -463,13 +486,15 @@ class AssistantEntryViewModel @Inject constructor(
     val uiState: StateFlow<AssistantEntryUiState> = combine(
         assistantController.state,
         toolCallEventStore.state,
-        settingsRepository.assistantTextPanelEnabled,
+        settingsRepository.assistantConversationTextEnabled,
+        settingsRepository.assistantTextInputEnabled,
         inputText,
-    ) { state, toolCall, textPanelEnabled, input ->
+    ) { state, toolCall, conversationTextEnabled, textInputEnabled, input ->
         AssistantEntryUiState(
             state = state,
             toolCall = toolCall,
-            textPanelEnabled = textPanelEnabled,
+            conversationTextEnabled = conversationTextEnabled,
+            textInputEnabled = textInputEnabled,
             inputText = input,
         )
     }.stateIn(
@@ -478,7 +503,8 @@ class AssistantEntryViewModel @Inject constructor(
         initialValue = AssistantEntryUiState(
             state = assistantController.state.value,
             toolCall = toolCallEventStore.state.value,
-            textPanelEnabled = false,
+            conversationTextEnabled = true,
+            textInputEnabled = false,
             inputText = "",
         ),
     )

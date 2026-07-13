@@ -79,6 +79,8 @@ class LocalAssistantController @Inject constructor(
     private var automaticReconnectJob: Job? = null
     @Volatile private var manualDisconnectRequested: Boolean = false
     private var pttResponseExpected: Boolean = false
+    // Phase5 product transcript/input split: only user-facing ASR/TTS text enters the transcript.
+    private var assistantReplyTextBuffer: String = ""
     @Volatile private var bargeInTriggered: Boolean = false
     @Volatile private var bargeInStarting: Boolean = false
     private var bargeInMonitorToken: Long = -1L
@@ -390,7 +392,12 @@ class LocalAssistantController @Inject constructor(
             return
         }
         if (!mutableState.value.isConnected || !realWebSocketClient.isConnected()) connectReal()
-        val thinking = stateMachine.textSubmitted(mutableState.value, trimmed, nowMillis())
+        assistantReplyTextBuffer = ""
+        val thinking = stateMachine.textSubmitted(
+            mutableState.value.copy(lastAssistantText = null),
+            trimmed,
+            nowMillis(),
+        )
         mutableState.value = thinking.copy(runtimeMode = AssistantRuntimeMode.Real, fakeRuntime = false)
         if (thinking.errorMessage != null) return
 
@@ -1734,37 +1741,59 @@ class LocalAssistantController @Inject constructor(
             }
             is ProtocolEvent.AssistantText -> {
                 val messageType = runCatching { JSONObject(rawJson).optString("type") }.getOrDefault("")
-                if (messageType == "stt") {
-                    mutableState.value = base.copy(
-                        lastUserText = event.text,
-                        statusText = "已识别语音",
-                    )
-                } else {
-                    val streamingActive = base.streamingSessionActive
-                    mutableState.value = stateMachine.assistantText(base, event.text, nowMillis()).copy(
-                        runtimeMode = AssistantRuntimeMode.Real,
-                        fakeRuntime = false,
-                        gateBRealTextVerified = true,
-                        streamingConversationState = if (streamingActive) {
-                            StreamingConversationState.Thinking
-                        } else {
-                            base.streamingConversationState
-                        },
-                        statusText = "收到助手回复",
-                    )
-                    if (streamingActive) {
-                        scheduleNextStreamingTurn(streamingGeneration, STREAMING_TEXT_ONLY_RESUME_MS)
-                    } else {
-                        schedulePushToTalkWakeWordResume(RESPONSE_TEXT_RESUME_MS)
+                val cleanedText = event.text.trim()
+                when {
+                    messageType == "stt" -> {
+                        assistantReplyTextBuffer = ""
+                        mutableState.value = base.copy(
+                            lastUserText = cleanedText.takeIf { it.isNotBlank() },
+                            lastAssistantText = null,
+                            statusText = "已识别语音",
+                        )
                     }
+                    messageType == "llm" && !cleanedText.hasReadableTranscriptText() -> {
+                        // Xiaozhi llm messages may contain only an emotion emoji. Keep it out of the transcript.
+                        mutableState.value = base.copy(statusText = "助手正在组织回复")
+                    }
+                    cleanedText.isNotBlank() -> {
+                        assistantReplyTextBuffer = cleanedText
+                        val streamingActive = base.streamingSessionActive
+                        mutableState.value = stateMachine.assistantText(base, cleanedText, nowMillis()).copy(
+                            runtimeMode = AssistantRuntimeMode.Real,
+                            fakeRuntime = false,
+                            gateBRealTextVerified = true,
+                            streamingConversationState = if (streamingActive) {
+                                StreamingConversationState.Thinking
+                            } else {
+                                base.streamingConversationState
+                            },
+                            statusText = "收到助手回复",
+                        )
+                        if (streamingActive) {
+                            scheduleNextStreamingTurn(streamingGeneration, STREAMING_TEXT_ONLY_RESUME_MS)
+                        } else {
+                            schedulePushToTalkWakeWordResume(RESPONSE_TEXT_RESUME_MS)
+                        }
+                    }
+                    else -> mutableState.value = base
                 }
             }
             is ProtocolEvent.TtsState -> {
                 val ended = event.state == "stop" || event.state == "end"
                 val streamingActive = base.streamingSessionActive
                 val receivingBargeIn = streamingActive && base.bargeInMonitorActive && bargeInTriggered
+                val spokenText = event.text.orEmpty().trim()
+                val transcriptBase = if (spokenText.hasReadableTranscriptText()) {
+                    assistantReplyTextBuffer = mergeAssistantTranscript(assistantReplyTextBuffer, spokenText)
+                    base.copy(
+                        lastAssistantText = assistantReplyTextBuffer,
+                        gateBRealTextVerified = true,
+                    )
+                } else {
+                    base
+                }
                 if (!ended && receivingBargeIn) {
-                    mutableState.value = base.copy(
+                    mutableState.value = transcriptBase.copy(
                         phase = AssistantPhase.Listening,
                         audio = AssistantAudioStatus.Recording,
                         streamingConversationState = StreamingConversationState.UserSpeaking,
@@ -1774,7 +1803,7 @@ class LocalAssistantController @Inject constructor(
                 } else if (ended && receivingBargeIn) {
                     responsePlaybackIdleJob?.cancel()
                     realAudioEngine.stopPlaybackAndRelease()
-                    mutableState.value = base.copy(
+                    mutableState.value = transcriptBase.copy(
                         phase = AssistantPhase.Listening,
                         audio = AssistantAudioStatus.Recording,
                         streamingConversationState = StreamingConversationState.UserSpeaking,
@@ -1784,7 +1813,7 @@ class LocalAssistantController @Inject constructor(
                 } else if (ended) {
                     responsePlaybackIdleJob?.cancel()
                     realAudioEngine.stopPlaybackAndRelease()
-                    mutableState.value = base.copy(
+                    mutableState.value = transcriptBase.copy(
                         phase = AssistantPhase.Connected,
                         audio = AssistantAudioStatus.Idle,
                         streamingConversationState = if (streamingActive) {
@@ -1809,7 +1838,7 @@ class LocalAssistantController @Inject constructor(
                     responsePlaybackIdleJob?.cancel()
                     streamingNextTurnJob?.cancel()
                     pttWakeWordResumeJob?.cancel()
-                    mutableState.value = base.copy(
+                    mutableState.value = transcriptBase.copy(
                         phase = AssistantPhase.Speaking,
                         audio = AssistantAudioStatus.Playing,
                         streamingConversationState = if (streamingActive) {
@@ -1833,8 +1862,7 @@ class LocalAssistantController @Inject constructor(
                 val sent = realWebSocketClient.sendMcpResponse(event.responseJson, ::handleRealWebSocketEvent)
                 val trace = event.toToolTrace()
                 mutableState.value = base.copy(
-                    lastAssistantText = event.message,
-                    statusText = "真实服务端 MCP ${event.requestMethod ?: "request"} 已通过 Phase4 工具链处理，response_sent=$sent",
+                    statusText = if (trace.toolName != null) "便签操作已处理" else "操作已处理",
                     phase4RealToolCallVerified = base.phase4RealToolCallVerified || (sent && trace.toolName != null),
                     lastToolName = trace.toolName,
                     lastToolStatus = trace.status,
@@ -2018,6 +2046,18 @@ class LocalAssistantController @Inject constructor(
         val confirmationId: String?,
     )
 
+    private fun mergeAssistantTranscript(current: String, incoming: String): String {
+        val next = incoming.trim()
+        if (next.isBlank()) return current
+        val previous = current.trim()
+        if (previous.isBlank()) return next.take(MAX_TRANSCRIPT_CHARS)
+        if (previous == next || previous.endsWith(next)) return previous.takeLast(MAX_TRANSCRIPT_CHARS)
+        if (next.startsWith(previous)) return next.takeLast(MAX_TRANSCRIPT_CHARS)
+        return "$previous\n$next".takeLast(MAX_TRANSCRIPT_CHARS)
+    }
+
+    private fun String.hasReadableTranscriptText(): Boolean = any { it.isLetterOrDigit() }
+
     private fun nowMillis(): Long = System.currentTimeMillis()
 
     private companion object {
@@ -2032,6 +2072,7 @@ class LocalAssistantController @Inject constructor(
         const val RESPONSE_TTS_RESUME_MS = 500L
         const val RESPONSE_FALLBACK_RESUME_MS = 12_000L
         const val RESPONSE_PLAYBACK_IDLE_MS = 1_500L
+        const val MAX_TRANSCRIPT_CHARS = 800
         const val MAX_AUTOMATIC_RECONNECT_ATTEMPTS = 5
     }
 }
