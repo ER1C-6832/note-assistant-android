@@ -5,7 +5,6 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -16,7 +15,6 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -49,11 +47,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.er1cmo.noteassistant.notes.domain.model.Note
@@ -61,7 +57,6 @@ import com.er1cmo.noteassistant.notes.domain.model.NoteType
 import com.er1cmo.noteassistant.notes.domain.model.Tag
 import com.er1cmo.noteassistant.notes.ui.R
 import com.er1cmo.noteassistant.notes.ui.components.NoteCard
-import kotlin.math.roundToInt
 
 private const val FILTER_ALL = "全部"
 private const val FILTER_PINNED = "置顶"
@@ -137,7 +132,6 @@ fun NoteListScreen(
     var snackbarMessage by remember { mutableStateOf<String?>(null) }
     var pinnedHomeTagId by rememberSaveable { mutableStateOf<Long?>(null) }
     var gridColumns by rememberSaveable { mutableStateOf(1) }
-    var pageDragOffset by remember { mutableStateOf(0f) }
     val snackbarHostState = remember { SnackbarHostState() }
 
     val selectedTag = remember(state.tags, selectedFilter) {
@@ -145,9 +139,6 @@ fun NoteListScreen(
     }
     val pinnedHomeTag = remember(state.tags, pinnedHomeTagId) {
         pinnedHomeTagId?.let { id -> state.tags.firstOrNull { it.id == id } }
-    }
-    val swipeFilters = remember(pinnedHomeTag) {
-        MAIN_FILTERS + listOfNotNull(pinnedHomeTag?.filterValue())
     }
     val selectedCreateTag = selectedTag?.name
     val displayNotes = remember(state.notes, state.deletedNotes, state.archivedNotes, selectedFilter, selectedTag, searchQuery) {
@@ -182,30 +173,6 @@ fun NoteListScreen(
     fun selectFilter(filter: String) {
         selectedFilter = filter
         exitSelection()
-    }
-
-    fun switchToNextMainFilter() {
-        val currentIndex = swipeFilters.indexOf(selectedFilter)
-        val next = when {
-            currentIndex in 0 until swipeFilters.lastIndex -> swipeFilters[currentIndex + 1]
-            currentIndex == -1 -> FILTER_ALL
-            else -> selectedFilter
-        }
-        if (next != selectedFilter) selectFilter(next)
-    }
-
-    fun switchToPreviousOrOpenTags() {
-        if (selectedFilter == FILTER_ALL) {
-            tagPanelOpen = true
-            return
-        }
-        val currentIndex = swipeFilters.indexOf(selectedFilter)
-        val previous = when {
-            currentIndex > 0 -> swipeFilters[currentIndex - 1]
-            currentIndex == -1 -> FILTER_ALL
-            else -> selectedFilter
-        }
-        if (previous != selectedFilter) selectFilter(previous)
     }
 
     fun showTagByExternalCommand(tagId: Long?, tagName: String) {
@@ -336,28 +303,18 @@ fun NoteListScreen(
                         onToggleColumns = { gridColumns = if (gridColumns == 1) 2 else 1 },
                     )
 
-                    // v1.0.1 home navigation hotfix
-                    val swipeModifier = Modifier
-                        .offset { IntOffset(pageDragOffset.roundToInt(), 0) }
-                        .swipeToSwitchFilters(
-                            enabled = !selectionMode && !tagPanelOpen,
-                            onDragOffsetChange = { pageDragOffset = it },
-                            onSwipeLeft = ::switchToNextMainFilter,
-                            onSwipeRight = ::switchToPreviousOrOpenTags,
-                        )
-
                     if (displayNotes.isEmpty()) {
                         EmptyNotes(
                             selectedFilter = selectedFilter,
                             selectedTagName = selectedCreateTag,
                             searchQuery = searchQuery,
                             onCreateClick = { onCreateClick(selectedCreateTag) },
-                            modifier = swipeModifier.weight(1f),
+                            modifier = Modifier.weight(1f),
                         )
                     } else {
                         val rows = remember(displayNotes, gridColumns) { displayNotes.chunked(gridColumns) }
                         LazyColumn(
-                            modifier = swipeModifier.weight(1f),
+                            modifier = Modifier.weight(1f),
                             verticalArrangement = Arrangement.spacedBy(10.dp),
                         ) {
                             items(rows, key = { row -> row.joinToString(separator = ":") { it.id.toString() } }) { rowNotes ->
@@ -980,7 +937,7 @@ private fun TagDrawerRow(text: String, selected: Boolean, selectedBg: Color, tex
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(text = text, modifier = Modifier.weight(1f), color = textColor, style = MaterialTheme.typography.bodyMedium, maxLines = 1)
-        if (selected) Text("✓", color = textColor, fontWeight = FontWeight.SemiBold)
+        if (selected) Text("ok", color = textColor, fontWeight = FontWeight.SemiBold)
     }
 }
 
@@ -1006,49 +963,13 @@ private fun TagManageRow(
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(text = "# ${tag.name}", modifier = Modifier.weight(1f).clickable(onClick = onSelect), color = textColor, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            if (selected) Text("✓", color = textColor, fontWeight = FontWeight.SemiBold)
+            if (selected) Text("ok", color = textColor, fontWeight = FontWeight.SemiBold)
         }
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(text = if (pinnedToHome) "取消固定" else "固定首页", modifier = Modifier.clickable(onClick = onToggleHomePin), color = actionColor, style = MaterialTheme.typography.labelMedium)
             Text(text = "重命名", modifier = Modifier.clickable(onClick = onRename), color = actionColor, style = MaterialTheme.typography.labelMedium)
             Text(text = "删除", modifier = Modifier.clickable(onClick = onDelete), color = Color(0xFFB42318), style = MaterialTheme.typography.labelMedium)
         }
-    }
-}
-
-private fun Modifier.swipeToSwitchFilters(
-    enabled: Boolean,
-    onDragOffsetChange: (Float) -> Unit,
-    onSwipeLeft: () -> Unit,
-    onSwipeRight: () -> Unit,
-): Modifier = if (!enabled) {
-    this
-} else {
-    pointerInput(enabled) {
-        val triggerDistance = 72.dp.toPx()
-        val maxFeedbackOffset = 96.dp.toPx()
-        var totalDrag = 0f
-        detectHorizontalDragGestures(
-            onDragStart = {
-                totalDrag = 0f
-                onDragOffsetChange(0f)
-            },
-            onHorizontalDrag = { change, dragAmount ->
-                change.consume()
-                totalDrag += dragAmount
-                onDragOffsetChange(
-                    (totalDrag * 0.38f).coerceIn(-maxFeedbackOffset, maxFeedbackOffset),
-                )
-            },
-            onDragEnd = {
-                when {
-                    totalDrag <= -triggerDistance -> onSwipeLeft()
-                    totalDrag >= triggerDistance -> onSwipeRight()
-                }
-                onDragOffsetChange(0f)
-            },
-            onDragCancel = { onDragOffsetChange(0f) },
-        )
     }
 }
 
